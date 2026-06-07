@@ -1,0 +1,19 @@
+# Backend HTTP (expose le moteur au front React/Next)
+fastapi>=0.110.0
+uvicorn[standard]>=0.29.0
+
+# LLM (interface unifiée — Anthropic, OpenAI, Google, Ollama, LM Studio, JAN)
+litellm>=1.40.0
+
+# Données
+pandas>=2.2.0
+
+# Enrichissement mécanique des descriptions (étape `enrich`, lecture locale des
+# binaires bureautiques — aucun appel réseau, pas d'OCR)
+pypdf>=4.0.0
+python-docx>=1.1.0
+openpyxl>=3.1.0
+python-pptx>=0.6.23
+
+# Utilitaires
+python-dotenv>=1.0.0
