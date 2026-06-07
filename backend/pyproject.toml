@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "odacea"
+version = "0.1.0"
+description = "Outil d'audit optimisé par intelligence artificielle pour les archives électroniques"
+authors = [{name = "Aulsen Dzangui"}]
+license = {text = "AGPL-3.0"}
+requires-python = ">=3.9"
+dependencies = [
+    "litellm>=1.0",
+    "pandas>=2.0",
+    "requests>=2.31",
+]
+
+[project.urls]
+Homepage = "https://github.com/AulsenDzangui/odacea"

@@ -1,0 +1,36 @@
+ODACEA — Licence des textes de prompts
+======================================
+
+CE DOCUMENT NE COUVRE QUE LES TEXTES DE PROMPTS d'ODACEA, c'est-à-dire les
+chaînes SYSTEM_PROMPT (et messages associés) des fichiers suivants, ainsi que
+tout fichier portant en en-tête la mention « Licence CC BY-SA 4.0 » :
+
+    backend/prompts/AUD_001.py
+    backend/prompts/CLA_001.py
+
+Ces textes sont distribués sous licence Creative Commons Attribution -
+Partage dans les Mêmes Conditions 4.0 International (CC BY-SA 4.0) :
+
+    https://creativecommons.org/licenses/by-sa/4.0/legalcode.fr
+
+Le reste du dépôt ODACEA — tout le CODE, y compris le code Python qui entoure
+ces chaînes — est distribué sous licence AGPL-3.0 (voir le fichier LICENSE).
+Ces deux licences s'appliquent à des objets distincts et ne se contaminent
+pas : seule la valeur textuelle des chaînes de prompts relève de la présente
+licence ; la structure du fichier .py, les fonctions et le reste du dépôt
+relèvent de l'AGPL-3.0.
+
+Origine et attribution
+----------------------
+Ces prompts sont issus de la méthodologie de la « Bibliothèque de prompts
+archivistiques » :
+
+    https://github.com/AulsenDzangui/bibliotheque-prompts-archivistiques
+
+dont l'auteur d'ODACEA est également l'auteur et le titulaire des droits.
+Toute réutilisation ou adaptation doit créditer cette origine et être
+redistribuée sous la même licence CC BY-SA 4.0. Exemple de mention :
+« Prompts ODACEA, par Aulsen Dzangui, dérivés de la Bibliothèque de prompts
+archivistiques — CC BY-SA 4.0 ».
+
+Copyright (c) 2026 Aulsen Dzangui.
