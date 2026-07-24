@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "odacea"
-version = "0.1.0"
+version = "0.2.0"
 description = "Outil d'audit optimisé par intelligence artificielle pour les archives électroniques"
 authors = [{name = "Aulsen Dzangui"}]
 license = {text = "AGPL-3.0"}

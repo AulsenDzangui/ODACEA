@@ -49,7 +49,7 @@ from config.settings import (
 )
 from llm import get_provider
 
-app = FastAPI(title="ODACEA API", version="0.1.0")
+app = FastAPI(title="ODACEA API", version="0.2.0")
 
 # Dev : le front Next (localhost:9000) peut appeler directement le backend.
 # En prod, privilégier un proxy same-origin (rewrites Next) plutôt que CORS large.

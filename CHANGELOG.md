@@ -8,6 +8,8 @@ projet adhère au [versionnage sémantique](https://semver.org/lang/fr/)
 
 ## [Non publié]
 
+## [0.2.0] — 2026-07-24
+
 ### Ajouté
 
 - **Appliquer le classement au fonds (copie physique)** : à l'étape de
@@ -45,5 +47,6 @@ projet adhère au [versionnage sémantique](https://semver.org/lang/fr/)
 - Support des modèles locaux (Ollama, LM Studio) pour garder les données
   sensibles sur site, en plus des fournisseurs cloud.
 
-[Non publié]: https://github.com/AulsenDzangui/ODACEA/compare/v0.1.0...HEAD
+[Non publié]: https://github.com/AulsenDzangui/ODACEA/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/AulsenDzangui/ODACEA/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/AulsenDzangui/ODACEA/releases/tag/v0.1.0
