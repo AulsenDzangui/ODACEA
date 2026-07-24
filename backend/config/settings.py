@@ -21,3 +21,7 @@ DEFAULT_LOCAL_ENDPOINTS = {
 
 LOCAL_MODEL_PREFIXES = ("ollama/", "openai/", "lm_studio/")
 
+# Garde mémoire : nombre maximal de lignes acceptées à l'entrée (CSV ou scan de
+# dossier). Au-delà, le vrac doit être découpé avant traitement.
+MAX_CSV_ROWS = int(os.getenv("ODACEA_MAX_CSV_ROWS", "50000"))
+

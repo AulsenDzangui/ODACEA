@@ -64,6 +64,31 @@ export async function postJson<T = unknown>(
   return data as T;
 }
 
+// ── Import direct d'un dossier local (scan → CSV canonique) ──────────────────
+
+export type ScanStats = {
+  itemCount: number;
+  folderCount: number;
+  rootTitle: string;
+  excludedCount: number;
+  skippedSymlinks: number;
+};
+
+export type ParseFromFolderResult = {
+  derivedCsv: string;
+  scan: ScanStats;
+};
+
+/** Scanne un dossier local côté backend (métadonnées seules) et récupère le CSV
+ * canonique dérivé + les stats du scan. Transport pur : n'envoie qu'un chemin. */
+export async function parseFromFolder(body: {
+  sourceRoot: string;
+  prep: Record<string, unknown>;
+  batchSize: number;
+}): Promise<ParseFromFolderResult> {
+  return postJson<ParseFromFolderResult>("/parse/from-folder", body);
+}
+
 export type Progress = { batch: number; totalBatches: number; itemsDone: number };
 
 export type StreamCallbacks = {

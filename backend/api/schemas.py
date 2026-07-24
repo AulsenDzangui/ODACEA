@@ -43,6 +43,20 @@ class ParseRequest(CamelModel):
     batch_size: int = 0
 
 
+class ParseFromFolderRequest(CamelModel):
+    """Import direct d'un dossier local — POST /parse/from-folder.
+
+    **Backend local uniquement** : le serveur scanne l'arborescence réelle sous
+    `source_root` (chemin **sur la machine de l'archiviste**) pour en dériver le
+    CSV canonique, puis renvoie la même réponse que `/parse` **plus** le CSV
+    dérivé (`derivedCsv`) et les stats du scan (`scan`). Le front ne transmet
+    qu'un chemin ; **aucun binaire n'est ouvert** (métadonnées seules).
+    """
+    source_root: str
+    prep: PrepOptions = Field(default_factory=PrepOptions)
+    batch_size: int = 0
+
+
 class AuditRequest(ModelConfig):
     csv: str
     observation: str = ""

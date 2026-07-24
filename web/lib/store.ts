@@ -55,6 +55,9 @@ export type WizardState = {
   csvOriginal: SedaRow[] | null;
   csvErrors: string[];
   archivisteObservation: string;
+  // Racine du vrac local mémorisée pour l'import direct d'un dossier (scan) —
+  // partagée avec l'écran d'import. "" tant qu'aucun dossier n'a été désigné.
+  sourceRoot: string;
   tokenOptions: TokenOptions;
   exportOptions: ExportOptions;
   classementBatchSize: number;
@@ -101,6 +104,7 @@ export type WizardState = {
   setClassementBatchSize: (n: number) => void;
   setBriefMode: (b: boolean) => void;
   setArchivisteObservation: (s: string) => void;
+  setSourceRoot: (s: string) => void;
   setCsv: (filename: string, rows: SedaRow[], errors: string[]) => void;
   setAuditRunning: (b: boolean) => void;
   setAuditResult: (rapport: string, thinking: string, plan: string, notes: string) => void;
@@ -208,6 +212,7 @@ export const useWizard = create<WizardState>((set) => ({
   csvOriginal: null,
   csvErrors: [],
   archivisteObservation: "",
+  sourceRoot: "",
   tokenOptions: initialTokenOptions,
   briefMode: false,
   exportOptions: { folderTitleFromFile: false, keepOriginalFileTitle: false },
@@ -278,6 +283,7 @@ export const useWizard = create<WizardState>((set) => ({
   setBriefMode: (briefMode) => set({ briefMode }),
   setArchivisteObservation: (archivisteObservation) =>
     set({ archivisteObservation }),
+  setSourceRoot: (sourceRoot) => set({ sourceRoot }),
   setCsv: (csvFilename, rows, csvErrors) =>
     set((state) => ({
       csvFilename,

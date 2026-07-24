@@ -4,6 +4,7 @@
 
 Endpoints :
     POST /parse                  — parse + valide un CSV → lignes/stats/aperçu préparé/estimation tokens
+    POST /parse/from-folder      — scanne un dossier local → CSV canonique dérivé + réponse /parse (backend local)
     POST /audit                  — AUD-001 en SSE (reasoning/text → done{report,plan,notes,planTree})
     POST /classement/prepare     — items à classer (pilotage du découpage en lots côté front)
     POST /classement/batch       — CLA-001 sur une tranche, en SSE (reasoning/text → done{llmRows})
@@ -29,6 +30,7 @@ from api.schemas import (
     ClassementFinalizeRequest,
     ClassementPrepareRequest,
     ExtractPlansRequest,
+    ParseFromFolderRequest,
     ParseRequest,
     ValidateConnectionRequest,
 )
@@ -82,6 +84,18 @@ def parse(req: ParseRequest):
         return engine.parse_payload(req.csv, req.prep, req.batch_size)
     except Exception as e:
         return JSONResponse({"error": f"Lecture CSV impossible : {e}"}, status_code=400)
+
+
+@app.post("/parse/from-folder")
+def parse_from_folder(req: ParseFromFolderRequest):
+    """Importe un **dossier local** en dérivant son CSV canonique (scan de
+    métadonnées, aucun binaire ouvert) puis renvoie la même réponse que /parse +
+    `derivedCsv` + `scan`. **Backend local uniquement.**"""
+    payload = engine.parse_from_folder_payload(req)
+    if "error" in payload:
+        status = 413 if payload.get("code") == "csv_too_large" else 400
+        return JSONResponse(payload, status_code=status)
+    return payload
 
 
 @app.post("/audit")

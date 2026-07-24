@@ -35,6 +35,7 @@ from core.csv_handler import (
 )
 from core.audit_scan import format_digest, scan_metadata
 from core.enrich import enrich_descriptions
+from core.source_scan import SourceScanError, write_source_csv
 from core.tokens import format_duration
 from llm import get_provider
 from prompts import AUD_001, CLA_001
@@ -394,6 +395,30 @@ def _add_prep_args(p: argparse.ArgumentParser) -> None:
                    help="Transmettre Content.Description au LLM (audit ET classement). Désactivé par défaut.")
 
 
+def cmd_scan(args) -> int:
+    """Scanne un dossier local et écrit le CSV canonique Archifiltre (sans
+    installer ni lancer Archifiltre). Métadonnées seules, aucun binaire ouvert."""
+    src = Path(args.input)
+    if not src.is_dir():
+        _log(f"✗ Dossier introuvable : {src}")
+        return EXIT_INPUT_INVALID
+    try:
+        stats = write_source_csv(src, Path(args.out))
+    except SourceScanError as e:
+        _log(f"✗ {e}")
+        return EXIT_INPUT_INVALID
+    _log(
+        f"✓ {stats['itemCount']} fichier(s), {stats['folderCount']} dossier(s) → {args.out}"
+    )
+    if stats["excludedCount"] or stats["skippedSymlinks"]:
+        _log(
+            f"  ({stats['excludedCount']} entrée(s) système ignorée(s), "
+            f"{stats['skippedSymlinks']} lien(s) symbolique(s) non suivi(s))"
+        )
+    _log("  ⚠ Dates issues de la modification du système de fichiers (pas de dates métier).")
+    return EXIT_OK
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="cli.py",
@@ -456,6 +481,16 @@ def build_parser() -> argparse.ArgumentParser:
     _add_prep_args(p_run)
     _add_llm_args(p_run)
     p_run.set_defaults(func=cmd_run)
+
+    # scan (dossier local → CSV canonique, sans Archifiltre)
+    p_scan = sub.add_parser(
+        "scan",
+        help="Scanne un dossier local → CSV canonique Archifiltre (sans installer Archifiltre)",
+    )
+    p_scan.add_argument("input", help="Dossier racine du vrac à scanner")
+    p_scan.add_argument("--out", "-o", required=True,
+                        help="CSV de sortie (canonique Archifiltre)")
+    p_scan.set_defaults(func=cmd_scan)
 
     return parser
 

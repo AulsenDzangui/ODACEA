@@ -16,6 +16,7 @@ import {
   AccordionTrigger,
 } from "@/components/ui/accordion";
 import { CsvPreview } from "@/components/csv-preview";
+import { FolderImportPanel } from "@/components/wizard/folder-import-panel";
 import { FileText, ArrowRight, AlertCircle, CheckCircle2, Sliders } from "lucide-react";
 
 type ParsePayload = {
@@ -87,6 +88,30 @@ export function StepUpload() {
     accept: { "text/csv": [".csv"], "application/vnd.ms-excel": [".csv"] },
     multiple: false,
   });
+
+  // Import direct d'un dossier local : le CSV dérivé côté serveur est ingéré
+  // exactement comme un CSV déposé (même passage par /parse, backend sans état).
+  const onFolderImported = useCallback(
+    async (derivedCsv: string, filename: string) => {
+      setLoading(true);
+      try {
+        const payload = await postJson<ParsePayload>("/parse", {
+          csv: derivedCsv,
+          prep,
+          batchSize: classementBatchSize,
+        });
+        setCsv(filename, payload.rows, payload.validationErrors);
+        setView(payload);
+      } catch (err) {
+        setCsv(filename, [], [err instanceof Error ? err.message : String(err)]);
+        setView(null);
+      } finally {
+        setLoading(false);
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [setCsv, classementBatchSize, tokenOptions],
+  );
 
   // Rafraîchit l'aperçu préparé + l'estimation tokens quand les options changent
   // (le backend Python est la seule source ; on re-sérialise le CSV chargé).
@@ -175,6 +200,12 @@ export function StepUpload() {
           )}
         </div>
       </div>
+
+      <FolderImportPanel
+        prep={prep}
+        batchSize={classementBatchSize}
+        onImported={onFolderImported}
+      />
 
       {csvErrors.length > 0 && (
         <Alert variant="destructive">

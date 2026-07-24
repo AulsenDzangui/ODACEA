@@ -13,6 +13,7 @@ finalize` convertit l'ensemble accumulé en RESIP en une seule passe.
 from __future__ import annotations
 
 import io
+import pathlib
 import time
 from typing import Iterator
 
@@ -26,7 +27,9 @@ from api.schemas import (
     ClassementPrepareRequest,
     PrepOptions,
 )
+from config.settings import MAX_CSV_ROWS
 from core.audit_scan import format_digest, scan_metadata
+from core.source_scan import SourceScanError, scan_source_csv
 from core.csv_handler import (
     convert_classement_to_resip,
     csv_to_string,
@@ -108,6 +111,25 @@ def parse_payload(csv: str, prep: PrepOptions, batch_size: int) -> dict:
             "itemCount": prepared_items,
         }
         payload["tokenEstimate"] = _token_estimate(df, prep, batch_size)
+    return payload
+
+
+def parse_from_folder_payload(req) -> dict:
+    """Import direct d'un dossier local (backend local uniquement). Scanne
+    l'arborescence réelle sous `source_root` pour en dériver le CSV canonique
+    (métadonnées seules, **aucun binaire ouvert**), puis renvoie la **même
+    réponse que /parse** sur ce CSV dérivé + `derivedCsv` (téléchargeable) +
+    `scan` (stats du scan). Une seule porte d'entrée : le CSV dérivé repasse par
+    `read_csv` via `parse_payload`."""
+    root = pathlib.Path((req.source_root or "").strip())
+    try:
+        derived_csv, scan = scan_source_csv(root, max_items=MAX_CSV_ROWS)
+    except SourceScanError as e:
+        code = "csv_too_large" if "trop volumineux" in str(e) else "source_missing"
+        return {"error": str(e), "code": code, "hint": e.hint}
+    payload = parse_payload(derived_csv, req.prep, req.batch_size)
+    payload["derivedCsv"] = derived_csv
+    payload["scan"] = scan
     return payload
 
 
