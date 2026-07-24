@@ -124,7 +124,76 @@ export async function planFromFolder(workDir: string): Promise<PlanFromFolder> {
   return postJson<PlanFromFolder>("/plan/from-folder", { workDir });
 }
 
-export type Progress = { batch: number; totalBatches: number; itemsDone: number };
+// ── Application physique du classement (copie du SIP vers un dossier cible) ──
+
+export type ApplyPreview = {
+  total: number;
+  copyable: number;
+  missing: string[];
+  missingCount: number;
+  atRoot: string[];
+  atRootCount: number;
+  renamedCollisions: { wanted: string; resolved: string }[];
+  collisionCount: number;
+  sanitizedNames: { original: string; sanitized: string }[];
+  operations: { sourceRel: string; targetRel: string }[];
+  /** Garde-fou du répertoire cible : non-null = refus à lever avant d'écrire. */
+  targetGuard: { error: string; code: string; hint: string } | null;
+};
+
+export type ApplyStats = {
+  total: number;
+  copied: number;
+  skipped: number;
+  failed: number;
+  errors: { sourceRel: string; error: string }[];
+  targetRoot: string;
+};
+
+/** Aperçu avant écriture : plan de copie + garde-fous cible, sans copier aucun
+ * fichier (backend local). */
+export async function applyPreview(
+  rows: Record<string, unknown>[],
+  sourceRoot: string,
+  targetRoot: string,
+  resume: boolean,
+  signal?: AbortSignal,
+): Promise<ApplyPreview> {
+  return postJson<ApplyPreview>(
+    "/apply/preview",
+    { rows, sourceRoot, targetRoot, resume },
+    signal,
+  );
+}
+
+/** Copie physique du classement vers `targetRoot` en SSE (la source n'est jamais
+ * mutée). Progression via `onProgress` (`copied`/`total`/`current`), stats finales
+ * dans `done.stats`. `confirm` obligatoire ; `resume` autorise une reprise. */
+export async function applyClassement(
+  args: {
+    rows: Record<string, unknown>[];
+    sourceRoot: string;
+    targetRoot: string;
+    resume: boolean;
+    confirm: boolean;
+  },
+  callbacks: StreamCallbacks = {},
+  signal?: AbortSignal,
+): Promise<StreamResult> {
+  return streamSse("/apply", { ...args }, callbacks, signal);
+}
+
+export type Progress = {
+  batch: number;
+  totalBatches: number;
+  itemsDone: number;
+  // Champs additionnels de la progression d'application physique (copie de fichiers).
+  copied?: number;
+  skipped?: number;
+  failed?: number;
+  total?: number;
+  current?: string;
+};
 
 export type StreamCallbacks = {
   onText?: (delta: string) => void;
@@ -247,6 +316,11 @@ export async function streamSse(
               batch: chunk.batch ?? 0,
               totalBatches: chunk.totalBatches ?? 0,
               itemsDone: chunk.itemsDone ?? 0,
+              copied: chunk.copied as number | undefined,
+              skipped: chunk.skipped as number | undefined,
+              failed: chunk.failed as number | undefined,
+              total: chunk.total as number | undefined,
+              current: chunk.current as string | undefined,
             });
             break;
           }

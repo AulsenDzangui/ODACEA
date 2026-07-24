@@ -10,6 +10,13 @@ projet adhère au [versionnage sémantique](https://semver.org/lang/fr/)
 
 ### Ajouté
 
+- **Appliquer le classement au fonds (copie physique)** : à l'étape de
+  classement, une fois le CSV RESIP produit, ODACEA peut **copier** chaque fichier
+  vers une nouvelle arborescence cible (dossier distinct) selon le plan validé.
+  Aperçu obligatoire avant écriture (garde-fous du dossier cible, binaires
+  introuvables, collisions de noms), progression en direct, reprise d'une copie
+  interrompue. **Le fonds d'origine n'est jamais modifié** (copie seule). Backend
+  local (API `POST /apply/preview` et `POST /apply`).
 - **Importer son propre plan de classement** : à l'étape d'audit, l'archiviste
   peut fournir directement son plan — en déposant un fichier (CSV Resip
   « dossiers seuls » ou Markdown), ou en **désignant un dossier existant du

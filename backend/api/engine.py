@@ -30,6 +30,7 @@ from api.schemas import (
 from config.settings import MAX_CSV_ROWS
 from core.audit_scan import format_digest, scan_metadata
 from core.source_scan import SourceScanError, scan_source_csv
+from core.apply_classement import build_apply_plan, check_target_guards, iter_apply
 from core.plan_folders import (
     adopt_markdown_plan,
     looks_like_csv,
@@ -213,6 +214,81 @@ def plan_from_folder_payload(req) -> dict:
         "rootTitle": root_title,
         "warnings": warnings,
     }
+
+
+# ── Application physique du classement (backend local uniquement) ────────────
+
+def _apply_df(rows: list[dict]) -> pd.DataFrame:
+    return pd.DataFrame(rows).astype(str)
+
+
+def apply_preview_payload(req) -> dict:
+    """Aperçu avant écriture (backend local uniquement). Dérive le plan de copie
+    des lignes RESIP (`rows`) et de la racine source, **sans copier aucun fichier**
+    (seule l'existence des sources est testée). Joint le contrôle des garde-fous
+    du répertoire cible quand `target_root` est fourni → `{plan…, targetGuard}`."""
+    if not req.rows:
+        return {"error": "Aucune ligne RESIP à appliquer.", "code": "apply_no_rows",
+                "hint": "Finalisez d'abord le classement (l'application copie le SIP produit)."}
+    source_root = pathlib.Path((req.source_root or "").strip())
+    if not source_root.is_dir():
+        return {"error": f"Dossier source introuvable : {req.source_root}",
+                "code": "source_missing",
+                "hint": "Indiquez la racine locale du fonds (le dossier réellement classé)."}
+    plan = build_apply_plan(_apply_df(req.rows), source_root)
+    payload = plan.as_dict()
+    guard = None
+    if (req.target_root or "").strip():
+        guard = check_target_guards(
+            source_root, pathlib.Path(req.target_root.strip()), resume=req.resume
+        )
+    payload["targetGuard"] = guard
+    return payload
+
+
+def apply_stream(req) -> Iterator[str]:
+    """Exécute l'application physique du classement en SSE (backend local
+    uniquement). Événements `progress` (copiés/total/fichier courant) puis
+    `done{stats}`. Erreurs par fichier **collectées sans interrompre** le run.
+    La **source n'est jamais mutée** (copie seule)."""
+    if not req.confirm:
+        yield sse.error(
+            "Application non confirmée — l'écriture n'a lieu qu'après confirmation explicite."
+        )
+        return
+    if not req.rows:
+        yield sse.error("Aucune ligne RESIP à appliquer. Finalisez d'abord le classement.")
+        return
+    source_root = pathlib.Path((req.source_root or "").strip())
+    target_root = pathlib.Path((req.target_root or "").strip())
+    if not source_root.is_dir():
+        yield sse.error(
+            f"Dossier source introuvable : {req.source_root}. "
+            "Indiquez la racine locale du fonds (le dossier réellement classé)."
+        )
+        return
+    guard = check_target_guards(source_root, target_root, resume=req.resume)
+    if guard is not None:
+        yield sse.error(f"{guard['error']} {guard['hint']}")
+        return
+
+    plan = build_apply_plan(_apply_df(req.rows), source_root)
+    start = time.monotonic()
+    for event in iter_apply(plan, source_root, target_root):
+        if event["type"] == "progress":
+            yield sse.event(
+                "progress",
+                copied=event["copied"],
+                skipped=event["skipped"],
+                failed=event["failed"],
+                total=event["total"],
+                current=event["current"],
+            )
+        elif event["type"] == "done":
+            yield sse.done(
+                stats=event["stats"],
+                durationMs=round((time.monotonic() - start) * 1000),
+            )
 
 
 # ── Audit (AUD-001) ──────────────────────────────────────────────────────────

@@ -30,6 +30,7 @@ import { CsvPreview } from "@/components/csv-preview";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { ArborescenceModal } from "@/components/arborescence-modal";
 import { IconAction } from "@/components/wizard/icon-action";
+import { ApplyPanel } from "@/components/wizard/apply-panel";
 import {
   AlertCircle,
   Download,
@@ -967,6 +968,13 @@ export function StepClassement() {
               onClick={() => setConfirmRelaunch(true)}
             />
           </div>
+
+          {csvFinal.rows.length > 0 && (
+            <>
+              <Separator />
+              <ApplyPanel rows={applyExportTitleChoices(csvFinal.rows)} />
+            </>
+          )}
         </>
       )}
 

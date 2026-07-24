@@ -7,6 +7,8 @@ Endpoints :
     POST /parse/from-folder      — scanne un dossier local → CSV canonique dérivé + réponse /parse (backend local)
     POST /plan/from-file         — adopte un plan fourni par l'archiviste (CSV « dossiers seuls » ou Markdown), sans LLM
     POST /plan/from-folder       — scanne un dossier local existant → plan de classement (backend local, sans LLM)
+    POST /apply/preview          — aperçu de l'application physique du classement (backend local, aucune écriture)
+    POST /apply                  — copie physique du classement vers un dossier cible, en SSE (backend local)
     POST /audit                  — AUD-001 en SSE (reasoning/text → done{report,plan,notes,planTree})
     POST /classement/prepare     — items à classer (pilotage du découpage en lots côté front)
     POST /classement/batch       — CLA-001 sur une tranche, en SSE (reasoning/text → done{llmRows})
@@ -27,6 +29,8 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from api import engine
 from api.schemas import (
+    ApplyPreviewRequest,
+    ApplyRequest,
     AuditRequest,
     ClassementBatchRequest,
     ClassementFinalizeRequest,
@@ -122,6 +126,25 @@ def plan_from_folder(req: PlanFromFolderRequest):
     if "error" in payload:
         return JSONResponse(payload, status_code=400)
     return payload
+
+
+@app.post("/apply/preview")
+def apply_preview(req: ApplyPreviewRequest):
+    """Aperçu de l'application physique du classement (total, collisions, binaires
+    introuvables, items à la racine, garde-fous cible) **avant toute écriture**.
+    **Backend local uniquement.**"""
+    payload = engine.apply_preview_payload(req)
+    if "error" in payload:
+        return JSONResponse(payload, status_code=400)
+    return payload
+
+
+@app.post("/apply")
+def apply(req: ApplyRequest):
+    """Copie physique du classement vers `target_root` en SSE (`progress` puis
+    `done{stats}`). **La source n'est jamais mutée** (copie seule). **Backend
+    local uniquement.**"""
+    return _sse(engine.apply_stream(req))
 
 
 @app.post("/audit")

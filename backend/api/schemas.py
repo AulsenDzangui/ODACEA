@@ -74,6 +74,32 @@ class PlanFromFolderRequest(CamelModel):
     work_dir: str
 
 
+class ApplyPreviewRequest(CamelModel):
+    """Aperçu avant écriture de l'application physique du classement — POST
+    /apply/preview. **Backend local uniquement**. `rows` = lignes du CSV RESIP
+    produit (même forme que `resip.rows` de finalize) ; `source_root` = racine du
+    fonds (pour tester l'existence des binaires). `target_root`/`resume`
+    optionnels → contrôle des garde-fous du répertoire cible dès l'aperçu.
+    **Aucun fichier n'est copié** : seule l'existence des sources est testée."""
+    rows: list[dict] = Field(default_factory=list)
+    source_root: str
+    target_root: str = ""
+    resume: bool = False
+
+
+class ApplyRequest(CamelModel):
+    """Application physique du classement — POST /apply (SSE). **Backend local
+    uniquement**. Copie chaque fichier vers `target_root` selon les lignes RESIP
+    (`rows`) ; la **source n'est jamais mutée**. `confirm=True` exigé (l'écriture
+    n'a lieu qu'après confirmation explicite) ; `resume` autorise un répertoire
+    cible déjà peuplé (reprise idempotente)."""
+    rows: list[dict] = Field(default_factory=list)
+    source_root: str
+    target_root: str
+    resume: bool = False
+    confirm: bool = False
+
+
 class AuditRequest(ModelConfig):
     csv: str
     observation: str = ""
