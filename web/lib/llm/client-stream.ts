@@ -89,6 +89,41 @@ export async function parseFromFolder(body: {
   return postJson<ParseFromFolderResult>("/parse/from-folder", body);
 }
 
+// ── Plan fourni par l'archiviste (adopté sans audit IA) ─────────────────────
+
+export type PlanFromFileResult = {
+  plan: string;
+  planTree: Record<string, string>;
+  folderCount: number;
+  rootTitle: string;
+  warnings: string[];
+  format: string;
+};
+
+/** Adopte un plan importé (CSV Resip « dossiers seuls » ou Markdown canonique)
+ * côté backend, sans appel LLM. Transport pur : n'envoie que le texte du fichier. */
+export async function planFromFile(body: {
+  name: string;
+  content: string;
+}): Promise<PlanFromFileResult> {
+  return postJson<PlanFromFileResult>("/plan/from-file", body);
+}
+
+export type PlanFromFolder = {
+  plan: string;
+  planTree: Record<string, string>;
+  folderCount: number;
+  ignoredFileCount: number;
+  rootTitle: string;
+  warnings: string[];
+};
+
+/** Scanne un dossier local existant et en reconstruit un plan de classement
+ * (noms de dossiers seuls, backend local). Transport pur : n'envoie qu'un chemin. */
+export async function planFromFolder(workDir: string): Promise<PlanFromFolder> {
+  return postJson<PlanFromFolder>("/plan/from-folder", { workDir });
+}
+
 export type Progress = { batch: number; totalBatches: number; itemsDone: number };
 
 export type StreamCallbacks = {

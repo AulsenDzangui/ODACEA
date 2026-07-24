@@ -5,6 +5,8 @@
 Endpoints :
     POST /parse                  — parse + valide un CSV → lignes/stats/aperçu préparé/estimation tokens
     POST /parse/from-folder      — scanne un dossier local → CSV canonique dérivé + réponse /parse (backend local)
+    POST /plan/from-file         — adopte un plan fourni par l'archiviste (CSV « dossiers seuls » ou Markdown), sans LLM
+    POST /plan/from-folder       — scanne un dossier local existant → plan de classement (backend local, sans LLM)
     POST /audit                  — AUD-001 en SSE (reasoning/text → done{report,plan,notes,planTree})
     POST /classement/prepare     — items à classer (pilotage du découpage en lots côté front)
     POST /classement/batch       — CLA-001 sur une tranche, en SSE (reasoning/text → done{llmRows})
@@ -32,6 +34,8 @@ from api.schemas import (
     ExtractPlansRequest,
     ParseFromFolderRequest,
     ParseRequest,
+    PlanFromFileRequest,
+    PlanFromFolderRequest,
     ValidateConnectionRequest,
 )
 from config.settings import (
@@ -95,6 +99,28 @@ def parse_from_folder(req: ParseFromFolderRequest):
     if "error" in payload:
         status = 413 if payload.get("code") == "csv_too_large" else 400
         return JSONResponse(payload, status_code=status)
+    return payload
+
+
+@app.post("/plan/from-file")
+def plan_from_file(req: PlanFromFileRequest):
+    """Adopte un plan fourni par l'archiviste (CSV Resip « dossiers seuls » ou
+    Markdown canonique) **sans appel LLM** → `{plan, planTree, folderCount,
+    rootTitle, warnings, format}`. Conversion en mémoire (aucun accès disque)."""
+    payload = engine.plan_from_file_payload(req.name, req.content)
+    if "error" in payload:
+        return JSONResponse(payload, status_code=400)
+    return payload
+
+
+@app.post("/plan/from-folder")
+def plan_from_folder(req: PlanFromFolderRequest):
+    """Scanne un **dossier local** existant et en reconstruit un plan de
+    classement (noms de dossiers seuls, aucun binaire ouvert). **Backend local
+    uniquement.**"""
+    payload = engine.plan_from_folder_payload(req)
+    if "error" in payload:
+        return JSONResponse(payload, status_code=400)
     return payload
 
 

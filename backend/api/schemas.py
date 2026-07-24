@@ -57,6 +57,23 @@ class ParseFromFolderRequest(CamelModel):
     batch_size: int = 0
 
 
+class PlanFromFileRequest(CamelModel):
+    """Plan fourni par l'archiviste à adopter **sans appel LLM** — POST
+    /plan/from-file. `content` = texte du fichier importé (CSV Resip « dossiers
+    seuls » ou Markdown à bloc arborescence canonique) ; `name` sert au routage
+    par extension. Le front ne fait que transporter le texte."""
+    name: str = ""
+    content: str
+
+
+class PlanFromFolderRequest(CamelModel):
+    """Scanne un dossier existant du poste pour en faire un plan — POST
+    /plan/from-folder. **Backend local uniquement** : l'arborescence de `work_dir`
+    (chemin sur la machine de l'archiviste) devient le plan de classement. Seuls
+    les noms de dossiers sont lus ; aucun contenu de fichier n'est ouvert."""
+    work_dir: str
+
+
 class AuditRequest(ModelConfig):
     csv: str
     observation: str = ""

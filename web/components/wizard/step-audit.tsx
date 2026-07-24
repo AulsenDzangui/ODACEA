@@ -1,11 +1,12 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useCallback } from "react";
+import { useDropzone } from "react-dropzone";
 import { useWizard } from "@/lib/store";
 import { stringifyCsv } from "@/lib/csv/parse";
 import { stripStructureMarkers } from "@/lib/csv/extract";
 import { parsePlanTree } from "@/lib/csv/plan-tree";
-import { streamSse, postJson } from "@/lib/llm/client-stream";
+import { streamSse, postJson, planFromFile } from "@/lib/llm/client-stream";
 import { TokenUsageBar } from "@/components/token-usage-bar";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -25,6 +26,7 @@ import { ThinkingPanel } from "@/components/thinking-panel";
 import { PlanTree } from "@/components/plan-tree";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { IconAction } from "@/components/wizard/icon-action";
+import { PlanFolderPicker } from "@/components/wizard/plan-folder-picker";
 import {
   AlertCircle,
   AlertTriangle,
@@ -61,6 +63,7 @@ export function StepAudit() {
     planValide,
     planNotes,
     setStep,
+    adoptPlan,
     lastError,
     setLastError,
     resetAudit,
@@ -75,6 +78,54 @@ export function StepAudit() {
   const [planTreeView, setPlanTreeView] = useState(true);
   const [confirmReset, setConfirmReset] = useState(false);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const [importPlanLoading, setImportPlanLoading] = useState(false);
+  const [importPlanError, setImportPlanError] = useState<string | null>(null);
+  const [importPlanWarnings, setImportPlanWarnings] = useState<string[]>([]);
+
+  // Adopte un plan fourni par l'archiviste (sans audit IA) : la conversion vit
+  // dans le moteur (POST /plan/from-file) ; le front ne transporte que le texte.
+  const applyPlanFile = useCallback(
+    async (name: string, content: string) => {
+      setImportPlanLoading(true);
+      setImportPlanError(null);
+      setImportPlanWarnings([]);
+      try {
+        const res = await planFromFile({ name, content });
+        adoptPlan(res.plan);
+        setImportPlanWarnings(res.warnings);
+      } catch (err) {
+        setImportPlanError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setImportPlanLoading(false);
+      }
+    },
+    [adoptPlan],
+  );
+
+  const onImportPlanDrop = useCallback(
+    async (files: File[]) => {
+      const file = files[0];
+      if (!file) return;
+      await applyPlanFile(file.name, await file.text());
+    },
+    [applyPlanFile],
+  );
+
+  const {
+    getRootProps: getImportRootProps,
+    getInputProps: getImportInputProps,
+    isDragActive: isImportDragActive,
+  } = useDropzone({
+    onDrop: onImportPlanDrop,
+    accept: {
+      "text/csv": [".csv"],
+      "application/vnd.ms-excel": [".csv"],
+      "text/markdown": [".md", ".markdown"],
+      "text/plain": [".txt", ".md"],
+    },
+    multiple: false,
+    disabled: auditRunning || importPlanLoading,
+  });
 
   if (!csvOriginal) {
     return (
@@ -178,7 +229,7 @@ export function StepAudit() {
   };
 
   const planOk = !!planValide && Object.keys(parsePlanTree(planValide)).length > 0;
-  const hasResults = !!rapportAudit;
+  const hasResults = !!rapportAudit || !!planValide;
 // ── Vue de lancement ─────────────────────────────────────────────────────────
   if (!hasResults) {
     return (
@@ -223,6 +274,77 @@ export function StepAudit() {
             ni notes. Utile quand l&apos;audit a déjà été fait ou que le vrac est
             bien connu.
           </p>
+        </div>
+
+        <Separator />
+
+        <div className="space-y-2">
+          <p className="text-xs font-medium tracking-wide text-(--ink-400) uppercase">
+            Vous avez déjà un plan&nbsp;?
+          </p>
+          <p className="text-xs text-(--ink-500)">
+            Adoptez-le directement, sans lancer d&apos;audit — CSV Resip
+            «&nbsp;dossiers seuls&nbsp;», plan Markdown, ou un dossier existant de
+            votre poste. Vous pourrez encore le modifier avant de continuer.
+          </p>
+          <div
+            {...getImportRootProps()}
+            className={`flex cursor-pointer flex-col items-center justify-center gap-1 rounded-md border border-dashed p-4 text-center text-xs transition-colors ${
+              isImportDragActive
+                ? "border-(--graphite-700) bg-(--paper-100)"
+                : "border-(--ink-200) hover:border-(--ink-300)"
+            } ${auditRunning || importPlanLoading ? "pointer-events-none opacity-60" : ""}`}
+          >
+            <input {...getImportInputProps()} />
+            {importPlanLoading ? (
+              <span className="flex items-center gap-1.5 text-(--ink-500)">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Adoption du plan…
+              </span>
+            ) : (
+              <>
+                <ClipboardList className="h-4 w-4 text-(--ink-400)" />
+                <span className="text-(--ink-600)">
+                  Déposez un CSV Resip «&nbsp;dossiers seuls&nbsp;» ou un plan
+                  Markdown, ou cliquez pour le choisir
+                </span>
+              </>
+            )}
+          </div>
+
+          <p className="text-xs text-(--ink-500)">
+            …ou depuis un dossier existant de votre poste :
+          </p>
+          <PlanFolderPicker
+            disabled={auditRunning || importPlanLoading}
+            onScanned={(res) => {
+              adoptPlan(res.plan);
+              setImportPlanWarnings(res.warnings);
+              setImportPlanError(null);
+            }}
+          />
+
+          {importPlanError && (
+            <Alert variant="destructive">
+              <AlertCircle className="h-4 w-4" />
+              <AlertTitle>Plan non exploitable</AlertTitle>
+              <AlertDescription className="text-xs whitespace-pre-line">
+                {importPlanError}
+              </AlertDescription>
+            </Alert>
+          )}
+          {importPlanWarnings.length > 0 && (
+            <Alert>
+              <Info className="h-4 w-4" />
+              <AlertDescription className="text-xs">
+                <ul className="list-inside list-disc">
+                  {importPlanWarnings.map((w, i) => (
+                    <li key={i}>{w}</li>
+                  ))}
+                </ul>
+              </AlertDescription>
+            </Alert>
+          )}
         </div>
 
         {lastError && (
@@ -280,10 +402,12 @@ export function StepAudit() {
 
       <Tabs defaultValue={planValide ? "plan" : "rapport"}>
         <TabsList>
-          <TabsTrigger value="rapport">
-            <BarChart3 className="mr-1.5 h-3.5 w-3.5" />
-            Rapport d&apos;audit
-          </TabsTrigger>
+          {rapportAudit && (
+            <TabsTrigger value="rapport">
+              <BarChart3 className="mr-1.5 h-3.5 w-3.5" />
+              Rapport d&apos;audit
+            </TabsTrigger>
+          )}
           <TabsTrigger value="plan">
             <ClipboardList className="mr-1.5 h-3.5 w-3.5" />
             Plan de classement

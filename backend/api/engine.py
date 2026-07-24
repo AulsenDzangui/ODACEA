@@ -30,6 +30,13 @@ from api.schemas import (
 from config.settings import MAX_CSV_ROWS
 from core.audit_scan import format_digest, scan_metadata
 from core.source_scan import SourceScanError, scan_source_csv
+from core.plan_folders import (
+    adopt_markdown_plan,
+    looks_like_csv,
+    plan_nodes_from_folders_df,
+    scan_folder_tree,
+    serialize_plan_block,
+)
 from core.csv_handler import (
     convert_classement_to_resip,
     csv_to_string,
@@ -131,6 +138,81 @@ def parse_from_folder_payload(req) -> dict:
     payload["derivedCsv"] = derived_csv
     payload["scan"] = scan
     return payload
+
+
+def plan_from_file_payload(name: str, content: str) -> dict:
+    """Adopte un plan fourni par l'archiviste **sans appel LLM** (POST
+    /plan/from-file). Route sur le format (CSV Resip « dossiers seuls » ou bloc
+    Markdown canonique), renvoie un document de plan **parsable par
+    parse_plan_tree** : `{plan, planTree, folderCount, rootTitle, warnings,
+    format}`. Erreur de conversion → `{error, code, hint}`. Le front ne fait que
+    transporter le texte."""
+    if not (content or "").strip():
+        return {"error": "Fichier vide.", "code": "plan_empty",
+                "hint": "Importez un CSV Resip « dossiers seuls » ou un plan Markdown."}
+    try:
+        if looks_like_csv(name, content):
+            df = parse_csv_text(content)
+            nodes, root_title, warnings, stats = plan_nodes_from_folders_df(df)
+            plan = serialize_plan_block(nodes, root_title)
+            return {
+                "plan": plan,
+                "planTree": parse_plan_tree(plan),
+                "folderCount": stats["folderCount"],
+                "ignoredItemCount": stats["ignoredItemCount"],
+                "rootTitle": root_title,
+                "warnings": warnings,
+                "format": "csv",
+            }
+        plan, warnings = adopt_markdown_plan(content)
+        tree = parse_plan_tree(plan)
+        return {
+            "plan": plan,
+            "planTree": tree,
+            "folderCount": len(tree),
+            "ignoredItemCount": 0,
+            "rootTitle": "",
+            "warnings": warnings,
+            "format": "markdown",
+        }
+    except ValueError as e:
+        return {
+            "error": str(e),
+            "code": "plan_unreadable",
+            "hint": ("Fournissez un CSV Resip ne contenant que des dossiers, ou un "
+                     "plan Markdown avec un bloc « Arborescence technique »."),
+        }
+    except Exception as e:
+        return {
+            "error": f"Lecture du plan impossible : {e}",
+            "code": "plan_unreadable",
+            "hint": "Vérifiez le format du fichier (CSV Resip « dossiers seuls » ou Markdown).",
+        }
+
+
+def plan_from_folder_payload(req) -> dict:
+    """Scanne un dossier existant du poste et en reconstruit un plan de classement
+    canonique (**backend local uniquement**) : `{plan, planTree, folderCount,
+    ignoredFileCount, rootTitle, warnings}`. Le contenu des fichiers n'est jamais
+    lu — seuls les **noms de dossiers** comptent (les fichiers sont ignorés)."""
+    work_dir = (req.work_dir or "").strip()
+    if not work_dir:
+        return {"error": "Dossier manquant.", "code": "plan_workdir_missing",
+                "hint": "Indiquez un dossier local dont l'arborescence servira de plan."}
+    try:
+        nodes, root_title, warnings, stats = scan_folder_tree(pathlib.Path(work_dir))
+    except ValueError as e:
+        return {"error": str(e), "code": "plan_workdir_missing",
+                "hint": "Le dossier est introuvable ou illisible."}
+    plan = serialize_plan_block(nodes, root_title)
+    return {
+        "plan": plan,
+        "planTree": parse_plan_tree(plan),
+        "folderCount": stats["folderCount"],
+        "ignoredFileCount": stats["ignoredFileCount"],
+        "rootTitle": root_title,
+        "warnings": warnings,
+    }
 
 
 # ── Audit (AUD-001) ──────────────────────────────────────────────────────────

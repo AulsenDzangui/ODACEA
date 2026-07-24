@@ -110,6 +110,9 @@ export type WizardState = {
   setAuditResult: (rapport: string, thinking: string, plan: string, notes: string) => void;
   setPlanValide: (plan: string) => void;
   resetPlan: () => void;
+  // Adopter un plan fourni par l'archiviste, sans audit IA (le pose comme plan
+  // validé et repart d'un état sans métadonnée d'audit ni classement).
+  adoptPlan: (plan: string) => void;
   setClassementRunning: (b: boolean) => void;
   setClassementResult: (
     raw: string,
@@ -330,6 +333,24 @@ export const useWizard = create<WizardState>((set) => ({
       planValide: state.planValideOriginal,
       planModifie: false,
     })),
+  adoptPlan: (plan) =>
+    set({
+      planValide: plan,
+      planValideOriginal: plan,
+      planNotes: "",
+      planModifie: false,
+      // Plan fourni directement : aucune métadonnée d'audit.
+      rapportAudit: "",
+      thinkingAudit: "",
+      usageAudit: null,
+      durationAudit: null,
+      // Repart d'un classement vierge.
+      csvFinal: null,
+      llmRawResponse: "",
+      llmRawRows: null,
+      classementBatches: null,
+      lastError: "",
+    }),
   setClassementRunning: (classementRunning) => set({ classementRunning }),
   setClassementResult: (
     llmRawResponse,

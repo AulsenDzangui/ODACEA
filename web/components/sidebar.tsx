@@ -137,11 +137,11 @@ export function Sidebar({ onCollapse }: { onCollapse?: () => void } = {}) {
   // Plus de sauvegarde manuelle : le projet est matérialisé au premier résultat
   // IA, puis chaque modification est persistée automatiquement (debounce).
 
-  // Création différée : on attend le premier résultat IA (rapport d'audit) pour
-  // créer le projet — évite de stocker les uploads abandonnés. Le nom par défaut
-  // est dérivé du fichier CSV (renommable ensuite via le crayon).
+  // Création différée : on attend le premier résultat (rapport d'audit IA ou plan
+  // adopté directement par l'archiviste) pour créer le projet — évite de stocker
+  // les uploads abandonnés. Le nom par défaut est dérivé du fichier CSV.
   useEffect(() => {
-    if (currentStem || !rapportAudit) return;
+    if (currentStem || (!rapportAudit && !state.planValide)) return;
     try {
       const base = state.csvFilename
         .replace(/\.csv$/i, "")
@@ -163,7 +163,7 @@ export function Sidebar({ onCollapse }: { onCollapse?: () => void } = {}) {
       setFeedback({ kind: "err", msg: e instanceof Error ? e.message : String(e) });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rapportAudit, currentStem]);
+  }, [rapportAudit, state.planValide, currentStem]);
 
   // Mises à jour : dès qu'une donnée persistée change, on ré-enregistre. Debounce
   // 800 ms pour ne pas écrire à chaque frappe (textarea d'observation). Les
