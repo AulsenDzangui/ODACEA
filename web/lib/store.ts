@@ -4,6 +4,7 @@ import type {
   ResipResult,
   LlmClassementRow,
   ClassementBatch,
+  ClassementDirective,
 } from "@/lib/csv/types";
 import type { LlmUsage } from "@/lib/llm/client-stream";
 import { DEFAULT_MODEL, LOCAL_MODEL_FALLBACK } from "@/lib/llm/config";
@@ -76,6 +77,9 @@ export type WizardState = {
   llmRawResponse: string;
   llmRawRows: LlmClassementRow[] | null;
   classementBatches: ClassementBatch[] | null;
+  // Consignes de classement de l'archiviste : réutilisées à chaque relance du
+  // classement, persistées au projet. Vide ⇒ prompt et conversion inchangés.
+  classementDirectives: ClassementDirective[];
   csvFinal: ResipResult | null;
   lastError: string;
   usageAudit: LlmUsage | null;
@@ -102,6 +106,7 @@ export type WizardState = {
   setTokenOptions: (o: Partial<TokenOptions>) => void;
   setExportOptions: (o: Partial<ExportOptions>) => void;
   setClassementBatchSize: (n: number) => void;
+  setClassementDirectives: (d: ClassementDirective[]) => void;
   setBriefMode: (b: boolean) => void;
   setArchivisteObservation: (s: string) => void;
   setSourceRoot: (s: string) => void;
@@ -163,6 +168,7 @@ export type ProjectSnapshot = {
   llmRawResponse: string;
   llmRawRows: LlmClassementRow[] | null;
   classementBatches: ClassementBatch[] | null;
+  classementDirectives?: ClassementDirective[];
   csvFinal: ResipResult | null;
   lastError: string;
 };
@@ -232,6 +238,7 @@ export const useWizard = create<WizardState>((set) => ({
   llmRawResponse: "",
   llmRawRows: null,
   classementBatches: null,
+  classementDirectives: [],
   csvFinal: null,
   lastError: "",
   usageAudit: null,
@@ -360,6 +367,7 @@ export const useWizard = create<WizardState>((set) => ({
   ) =>
     set({ llmRawResponse, thinkingClassement, csvFinal, llmRawRows }),
   setClassementBatches: (classementBatches) => set({ classementBatches }),
+  setClassementDirectives: (classementDirectives) => set({ classementDirectives }),
   setLastError: (lastError) => set({ lastError }),
   setUsageAudit: (usageAudit) => set({ usageAudit }),
   setUsageClassementTotal: (usageClassementTotal) => set({ usageClassementTotal }),
@@ -432,6 +440,7 @@ export const useWizard = create<WizardState>((set) => ({
       llmRawResponse: snapshot.llmRawResponse,
       llmRawRows: snapshot.llmRawRows,
       classementBatches: snapshot.classementBatches ?? null,
+      classementDirectives: snapshot.classementDirectives ?? [],
       csvFinal: snapshot.csvFinal,
       lastError: snapshot.lastError,
       // Mesures de session non persistées (comme usageAudit/usageClassementTotal) :

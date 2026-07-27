@@ -8,6 +8,21 @@ projet adhère au [versionnage sémantique](https://semver.org/lang/fr/)
 
 ## [Non publié]
 
+### Ajouté
+
+- **Consignes de classement** : à l'étape de classement, l'archiviste peut
+  donner des consignes qui guident l'IA — au niveau du fonds ou **ancrées à un
+  dossier précis du plan** (« regrouper CV, lettre de motivation et références
+  par employeur »). Elles font autorité dans le cadre du plan validé, sont
+  conservées avec le projet et réutilisées à chaque relance. Une consigne peut en
+  outre **autoriser la création de sous-dossiers** sous le dossier visé : le
+  classement crée alors les subdivisions nécessaires (un sous-dossier par
+  personne, par organisme, par affaire…), rattachées au bon dossier parent et
+  numérotées dans la continuité du plan — ces créations sont listées après coup
+  et ne comptent pas comme un écart au plan. Sans consigne, le classement est
+  strictement inchangé. Disponible aussi en ligne de commande
+  (`odacea classement … --directives consignes.txt`).
+
 ## [0.2.0] — 2026-07-24
 
 ### Ajouté

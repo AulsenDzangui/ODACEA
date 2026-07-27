@@ -5,7 +5,12 @@ import { useWizard } from "@/lib/store";
 import type { LlmClassementRow, SedaRow, ResipResult } from "@/lib/csv/types";
 import type { LlmUsage } from "@/lib/llm/client-stream";
 import { stringifyCsv } from "@/lib/csv/parse";
-import { parsePlanTree } from "@/lib/csv/plan-tree";
+import {
+  parsePlanTree,
+  parsePlanTitles,
+  displayParts,
+  sortKey,
+} from "@/lib/csv/plan-tree";
 import { validateOutputCsv } from "@/lib/csv/validate";
 import { REQUIRED_COLUMNS } from "@/lib/csv/constants";
 import { streamSse, postJson } from "@/lib/llm/client-stream";
@@ -31,9 +36,11 @@ import { ConfirmDialog } from "@/components/confirm-dialog";
 import { ArborescenceModal } from "@/components/arborescence-modal";
 import { IconAction } from "@/components/wizard/icon-action";
 import { ApplyPanel } from "@/components/wizard/apply-panel";
+import { DirectivesPanel } from "@/components/wizard/directives-panel";
 import {
   AlertCircle,
   Download,
+  MessageSquarePlus,
   RotateCcw,
   Pencil,
   ListTree,
@@ -86,6 +93,8 @@ export function StepClassement() {
     setClassementResult,
     classementBatches,
     setClassementBatches,
+    classementDirectives,
+    setClassementDirectives,
     csvFinal,
     thinkingClassement,
     llmRawResponse,
@@ -133,6 +142,27 @@ export function StepClassement() {
 
   const folderTree = parsePlanTree(planValide);
   const folderTreeValid = Object.keys(folderTree).length > 0;
+  const planTitles = parsePlanTitles(planValide);
+
+  // Sous-dossiers créés au dernier classement — rappel dans le panneau.
+  const createdFolders = csvFinal?.stats?.foldersCreatedAuthorized ?? [];
+  // Options de dossier du plan pour ancrer une consigne (libellés lisibles,
+  // dans l'ordre du plan).
+  const directiveFolderOptions = Object.keys(folderTree)
+    .sort((a, b) => {
+      const ka = sortKey(a);
+      const kb = sortKey(b);
+      for (let i = 0; i < Math.max(ka.length, kb.length); i++) {
+        const d = (ka[i] ?? -1) - (kb[i] ?? -1);
+        if (d !== 0) return d;
+      }
+      return a.localeCompare(b);
+    })
+    .map((tech) => {
+      const title = planTitles[tech] ?? displayParts(tech).label;
+      const { number } = displayParts(tech);
+      return { tech, label: number ? `${number} ${title}` : title };
+    });
 
   // CSV brut + options de préparation envoyés au backend (qui prépare/classe/convertit).
   const csv = stringifyCsv(csvOriginal);
@@ -180,7 +210,17 @@ export function StepClassement() {
       try {
         const result = await streamSse(
           "/classement/batch",
-          { csv, planValide, model: modelId, apiKey, baseUrl, prep, batchIndex: 0, batchSize: 0 },
+          {
+            csv,
+            planValide,
+            model: modelId,
+            apiKey,
+            baseUrl,
+            prep,
+            batchIndex: 0,
+            batchSize: 0,
+            directives: classementDirectives,
+          },
           {
             onText: (delta) => setStreamText((prev) => prev + delta),
             onReasoning: (delta) => setStreamThinking((prev) => prev + delta),
@@ -207,7 +247,7 @@ export function StepClassement() {
         }
         const fin = await postJson<{ resip: ResipResult; error?: string }>(
           "/classement/finalize",
-          { csv, planValide, llmRows },
+          { csv, planValide, llmRows, directives: classementDirectives },
         );
         if (fin.error) throw new Error(fin.error);
         setClassementResult(result.text, result.reasoning, fin.resip, llmRows);
@@ -266,6 +306,7 @@ export function StepClassement() {
           prep,
           batchIndex: i,
           batchSize: classementBatchSize,
+          directives: classementDirectives,
         },
         {
           onText: (delta) => {
@@ -336,7 +377,7 @@ export function StepClassement() {
     try {
       const fin = await postJson<{ resip: ResipResult; error?: string }>(
         "/classement/finalize",
-        { csv, planValide, llmRows: all },
+        { csv, planValide, llmRows: all, directives: classementDirectives },
       );
       if (fin.error) throw new Error(fin.error);
       setClassementResult(joinedRaw, "", fin.resip, all);
@@ -565,6 +606,40 @@ export function StepClassement() {
           </AccordionContent>
         </AccordionItem>
       </Accordion>
+
+      {/* ── Consignes de classement (ancrées à un dossier ou de fonds) ─── */}
+      {folderTreeValid && (
+        <Accordion
+          type="single"
+          collapsible
+          defaultValue={
+            classementDirectives.length > 0 || createdFolders.length > 0
+              ? "directives"
+              : undefined
+          }
+        >
+          <AccordionItem value="directives">
+            <AccordionTrigger>
+              <span className="flex items-center gap-1.5">
+                <MessageSquarePlus className="h-3.5 w-3.5" />
+                Consignes de classement
+                {classementDirectives.length > 0 &&
+                  ` (${classementDirectives.length})`}
+              </span>
+            </AccordionTrigger>
+            <AccordionContent>
+              <div className="pt-2">
+                <DirectivesPanel
+                  directives={classementDirectives}
+                  onChange={setClassementDirectives}
+                  folders={directiveFolderOptions}
+                  createdFolders={createdFolders}
+                />
+              </div>
+            </AccordionContent>
+          </AccordionItem>
+        </Accordion>
+      )}
 
       <Separator />
 

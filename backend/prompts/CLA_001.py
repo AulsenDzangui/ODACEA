@@ -54,10 +54,60 @@ Produisez, dans cet ordre :
 """
 
 
-def build_user_message(csv_content: str, plan_valide: str) -> str:
+# -----------------------------------------------------------------------------
+# Consigne d'usage des consignes de classement de l'archiviste — ajoutée au
+# prompt système **uniquement** quand l'appelant fournit des consignes (canal
+# optionnel). Le texte des consignes lui-même est formaté côté moteur
+# (`core.cla_directives.render_directives`) et placé dans le user message ; ce
+# fragment explique comment les honorer, y compris la convention de sortie
+# autorisant la création de sous-dossiers pour les dossiers désignés.
+# Texte de prompt — © 2026 Aulsen Dzangui — Licence CC BY-SA 4.0 (LICENSE-PROMPTS).
+# -----------------------------------------------------------------------------
+_DIRECTIVES = """\
+# Consignes de classement de l'archiviste
+Le message peut inclure des **consignes de classement** rédigées par l'archiviste, générales (au niveau du fonds) ou visant un dossier précis du plan. Elles **font autorité** : respectez-les en priorité, dans le cadre du plan validé.
+- Pour une consigne visant un dossier, appliquez-la aux fichiers qui relèvent de ce dossier.
+- **Création de sous-dossiers** : par défaut, n'inventez aucun dossier absent du plan. **Uniquement** lorsqu'une consigne l'**autorise explicitement** pour un dossier donné, vous pouvez créer des sous-dossiers sous ce dossier : écrivez alors `TargetFolder` sous la forme `Dossier_du_plan/Nouveau_sous_dossier` (le dossier du plan, puis « / », puis un nom court, parlant et sans extension pour le sous-dossier à créer — ex. un sous-dossier par personne, par organisme ou par affaire selon la consigne). Regroupez de façon cohérente : les fichiers d'un même ensemble (même personne, même organisme…) vont dans le **même** sous-dossier, au nom identique.
+- Hors de ces autorisations, `TargetFolder` reste **un seul nom exact d'un dossier du plan**, sans « / »."""
+
+# Point d'insertion du bloc ci-dessus : juste avant l'avis de classement, pour que
+# les règles de classement restent groupées.
+_DIRECTIVES_ANCHOR = "# Avis de classement"
+
+
+def build_system_prompt(*, directives: bool = False) -> str:
+    """Assemble le prompt système CLA-001.
+
+    ``directives`` ajoute la consigne d'usage des **consignes de classement de
+    l'archiviste** (et la convention de création de sous-dossiers). À activer
+    **uniquement** quand le user message porte un bloc de consignes
+    (``build_user_message(..., directives=...)``). Défaut faux ⇒ prompt
+    **byte-identique** à ``SYSTEM_PROMPT``.
+    """
+    if not directives:
+        return SYSTEM_PROMPT
+    head, anchor, tail = SYSTEM_PROMPT.partition(_DIRECTIVES_ANCHOR)
+    return f"{head}{_DIRECTIVES}\n\n{anchor}{tail}"
+
+
+def build_user_message(
+    csv_content: str,
+    plan_valide: str,
+    *,
+    directives: str | None = None,
+) -> str:
+    """Assemble le user message CLA-001.
+
+    ``directives`` : bloc Markdown de **consignes de classement** de l'archiviste
+    (rendu par ``core.cla_directives.render_directives``). Inséré entre le plan et
+    la liste des fichiers — les consignes sont constantes d'un lot à l'autre.
+    ``None`` ou vide ⇒ user message **inchangé**.
+    """
+    directives_block = f"{directives.strip()}\n\n" if directives and directives.strip() else ""
     return (
         "**Plan de classement validé :**\n"
         f"{plan_valide}\n\n"
+        f"{directives_block}"
         "**Fichiers à classer :**\n"
         "```csv\n"
         f"{csv_content}\n"

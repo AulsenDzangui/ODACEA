@@ -7,6 +7,21 @@ export type LlmClassementRow = {
   [key: string]: string;
 };
 
+/** Consigne de classement de l'archiviste. **Métadonnées seules** : un texte
+ *  rédigé par l'archiviste (+ éventuellement le nom technique d'un dossier du
+ *  plan qu'elle vise) — jamais de contenu documentaire. Forme exacte du corps
+ *  `directives` de /classement/{batch,finalize} : le moteur en dérive le bloc de
+ *  consignes et l'ensemble des dossiers à création autorisée
+ *  (`core.cla_directives`) ; le front ne fait que collecter et transporter.
+ *  `folder` vide/absent = consigne au niveau du fonds ; `folder` renseigné =
+ *  consigne ancrée à ce dossier. `allowCreation` autorise le classement à créer
+ *  des sous-dossiers sous le dossier visé. */
+export type ClassementDirective = {
+  text: string;
+  folder?: string;
+  allowCreation: boolean;
+};
+
 export type SimplifiedItem = {
   Path: string;
   CurrentTitle: string;
@@ -34,6 +49,11 @@ export type ResipStats = {
   itemsMalformed: number;
   /** true ssi le plan a été lu ET aucun écart dans les deux sens. */
   planMatches: boolean;
+  /** Sous-dossiers créés sous l'autorisation d'une consigne : ni un écart au
+   *  plan, ni un hors-plan. Absent des projets persistés avant l'ajout. */
+  foldersCreatedAuthorized?: string[];
+  /** Rattachement de chaque sous-dossier créé à son dossier parent du plan. */
+  foldersCreatedParents?: Record<string, string>;
 };
 
 export type ResipResult = {

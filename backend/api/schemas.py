@@ -115,6 +115,16 @@ class ClassementPrepareRequest(CamelModel):
     prep: PrepOptions = Field(default_factory=PrepOptions)
 
 
+class ClassementDirective(CamelModel):
+    """Une consigne de classement de l'archiviste. `folder` = nom technique d'un
+    dossier du plan (consigne ancrée) ou vide/None (consigne au niveau du fonds).
+    `allow_creation` autorise le classement à créer des sous-dossiers sous le
+    dossier visé."""
+    text: str
+    folder: str | None = None
+    allow_creation: bool = False
+
+
 class ClassementBatchRequest(ModelConfig):
     """Classe un lot : le serveur re-dérive les items et traite la tranche
     [batch_index*batch_size : +batch_size]. batch_size=0 ⇒ tous les items."""
@@ -123,13 +133,23 @@ class ClassementBatchRequest(ModelConfig):
     prep: PrepOptions = Field(default_factory=PrepOptions)
     batch_index: int = 0
     batch_size: int = 0
+    # Consignes de classement de l'archiviste : préconisations ancrées à un dossier
+    # du plan ou au niveau du fonds, injectées dans CLA-001. Vide ⇒ prompt inchangé.
+    directives: list[ClassementDirective] = Field(default_factory=list)
 
 
 class ClassementFinalizeRequest(CamelModel):
-    """Convertit les lignes LLM accumulées en CSV RESIP (passe unique)."""
+    """Convertit les lignes LLM accumulées en CSV RESIP (passe unique).
+
+    `directives` : les mêmes consignes que celles envoyées aux lots — au finalize,
+    seules celles **autorisant la création** de sous-dossiers importent (elles
+    déterminent sous quels dossiers du plan un `TargetFolder` en chemin
+    `parent/enfant` est une création légitime plutôt qu'un hors-plan). Vide ⇒
+    conversion inchangée."""
     csv: str
     plan_valide: str
     llm_rows: list[dict]
+    directives: list[ClassementDirective] = Field(default_factory=list)
 
 
 class ExtractPlansRequest(CamelModel):

@@ -28,12 +28,15 @@ from core.csv_handler import (
     csv_to_string,
     extract_csv_from_response,
     extract_plans,
+    parse_plan_tree,
     prepare_for_classement,
     prepare_for_llm,
     read_csv,
     validate_csv,
 )
 from core.audit_scan import format_digest, scan_metadata
+from core.cla_directives import allowed_parents as directives_allowed_parents
+from core.cla_directives import read_directives_file, render_directives, stale_anchors
 from core.enrich import enrich_descriptions
 from core.source_scan import SourceScanError, write_source_csv
 from core.tokens import format_duration
@@ -244,6 +247,9 @@ def _run_audit(*, input_path, out_report, out_plan, out_notes, note, args):
 
 
 def cmd_classement(args) -> int:
+    if getattr(args, "directives", None) and not Path(args.directives).exists():
+        _log(f"✗ Fichier de consignes introuvable : {args.directives}")
+        return EXIT_INPUT_INVALID
     plan_path = Path(args.plan)
     if not plan_path.exists():
         _log(f"✗ Fichier plan introuvable : {plan_path}")
@@ -259,11 +265,37 @@ def cmd_classement(args) -> int:
     )
 
 
+def _load_directives(args) -> list:
+    """Consignes de classement : si `--directives FICHIER` est fourni, lit le
+    fichier (une consigne par ligne, cf. `core.cla_directives.read_directives_file`)
+    et journalise ce qui a été retenu. Sans le flag, aucune consigne — le prompt
+    reste inchangé. La formulation du bloc injecté vit côté moteur —
+    **métadonnées seules**."""
+    path = getattr(args, "directives", None)
+    if not path:
+        return []
+    directives = read_directives_file(Path(path))
+    n_anc = sum(1 for d in directives if d.folder)
+    n_crea = sum(1 for d in directives if d.allow_creation)
+    _log(
+        f"✓ Consignes : {len(directives)} consigne(s) — "
+        f"{n_anc} ancrée(s) à un dossier, {n_crea} autorisant la création de sous-dossiers"
+    )
+    return directives
+
+
 def _run_classement(*, df_original, plan_valide, out_path, args) -> int:
     _log("→ Préparation des items à classer…")
     df_input = prepare_for_classement(df_original, include_description=args.description)
     n_total = len(df_input)
     _log(f"✓ {n_total} item(s) à classer")
+
+    directives = _load_directives(args)
+    plan_folder_names = set(parse_plan_tree(plan_valide))
+    directives_block = render_directives(directives, plan_folder_names) if directives else ""
+    for stale in stale_anchors(directives, plan_folder_names):
+        _log(f"⚠ Consigne ancrée au dossier '{stale}', absent du plan — traitée au niveau du fonds")
+    system_prompt = CLA_001.build_system_prompt(directives=bool(directives_block))
 
     provider, model = _build_provider(args)
     batch_size = getattr(args, "batch_size", 0) or 0
@@ -277,8 +309,10 @@ def _run_classement(*, df_original, plan_valide, out_path, args) -> int:
             df_batch = df_input.iloc[i * batch_size : (i + 1) * batch_size]
             _log(f"→ Lot {i + 1}/{n_batches} ({len(df_batch)} items) — CLA-001 (modèle : {model})…")
             csv_text = csv_to_string(df_batch)
-            user_msg = CLA_001.build_user_message(csv_content=csv_text, plan_valide=plan_valide)
-            _, llm_response, elapsed = _stream(provider, CLA_001.SYSTEM_PROMPT, user_msg, args.verbose)
+            user_msg = CLA_001.build_user_message(
+                csv_content=csv_text, plan_valide=plan_valide, directives=directives_block
+            )
+            _, llm_response, elapsed = _stream(provider, system_prompt, user_msg, args.verbose)
             cla_duration += elapsed
             _log(f"✓ Lot {i + 1}/{n_batches} — réponse reçue ({len(llm_response)} car.) en {format_duration(elapsed)}")
             try:
@@ -290,9 +324,11 @@ def _run_classement(*, df_original, plan_valide, out_path, args) -> int:
         _log(f"✓ Tous les lots traités — {len(df_llm)} ligne(s) LLM au total en {format_duration(cla_duration)}")
     else:
         csv_text = csv_to_string(df_input)
-        user_msg = CLA_001.build_user_message(csv_content=csv_text, plan_valide=plan_valide)
+        user_msg = CLA_001.build_user_message(
+            csv_content=csv_text, plan_valide=plan_valide, directives=directives_block
+        )
         _log(f"→ Classement CLA-001 (modèle : {model})…")
-        _, llm_response, cla_duration = _stream(provider, CLA_001.SYSTEM_PROMPT, user_msg, args.verbose)
+        _, llm_response, cla_duration = _stream(provider, system_prompt, user_msg, args.verbose)
         _log(f"✓ Réponse reçue ({len(llm_response)} car.) en {format_duration(cla_duration)}")
         try:
             df_llm = extract_csv_from_response(llm_response)
@@ -301,7 +337,12 @@ def _run_classement(*, df_original, plan_valide, out_path, args) -> int:
             return EXIT_OUTPUT_INVALID
 
     try:
-        df_final, warnings_list, stats = convert_classement_to_resip(df_llm, df_original, plan_valide)
+        df_final, warnings_list, stats = convert_classement_to_resip(
+            df_llm,
+            df_original,
+            plan_valide,
+            allowed_parents=directives_allowed_parents(directives, plan_folder_names),
+        )
     except Exception as e:
         _log(f"✗ Conversion RESIP impossible : {e}")
         return EXIT_OUTPUT_INVALID
@@ -330,6 +371,12 @@ def _run_classement(*, df_original, plan_valide, out_path, args) -> int:
             _log(f"      • hors plan : {f}")
         for f in miss:
             _log(f"      • non réalisé : {f}")
+    created = stats.get("foldersCreatedAuthorized") or []
+    if created:
+        parents = stats.get("foldersCreatedParents", {})
+        _log(f"  → {len(created)} sous-dossier(s) créé(s) sous vos consignes :")
+        for f in created:
+            _log(f"      • {f} (sous {parents.get(f, '?')})")
     if stats.get("itemsMalformed"):
         _log(f"  → {stats['itemsMalformed']} item(s) à cible malformée rattaché(s) à la racine")
     _log(f"  ⏱ Classement traité en {format_duration(cla_duration)}")
@@ -338,6 +385,9 @@ def _run_classement(*, df_original, plan_valide, out_path, args) -> int:
 
 
 def cmd_run(args) -> int:
+    if getattr(args, "directives", None) and not Path(args.directives).exists():
+        _log(f"✗ Fichier de consignes introuvable : {args.directives}")
+        return EXIT_INPUT_INVALID
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -378,6 +428,17 @@ def _add_llm_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--api-key", default=None, help="Clé API (cloud)")
     p.add_argument("--base-url", default=None, help="URL serveur local (LM Studio, Ollama, JAN)")
     p.add_argument("--verbose", "-v", action="store_true", help="Streamer les chunks LLM sur stderr")
+
+
+def _add_directives_arg(p: argparse.ArgumentParser) -> None:
+    p.add_argument(
+        "--directives", default=None, metavar="FICHIER",
+        help=(
+            "Fichier de consignes de classement (une par ligne : « consigne » pour "
+            "le fonds, « dossier_technique: consigne » pour un dossier du plan ; "
+            "marqueur [+sous-dossiers] pour autoriser la création de sous-dossiers)"
+        ),
+    )
 
 
 def _add_prep_args(p: argparse.ArgumentParser) -> None:
@@ -466,6 +527,7 @@ def build_parser() -> argparse.ArgumentParser:
                        help="Transmettre Content.Description au LLM de classement. Désactivé par défaut.")
     p_cla.add_argument("--batch-size", type=int, default=0, metavar="N",
                        help="Découper le classement en lots de N items (0 = pas de découpage, défaut)")
+    _add_directives_arg(p_cla)
     _add_llm_args(p_cla)
     p_cla.set_defaults(func=cmd_classement)
 
@@ -478,6 +540,7 @@ def build_parser() -> argparse.ArgumentParser:
                        help="Mode plan seul pour l'audit — ne demande que le plan de classement (sans état des lieux ni notes)")
     p_run.add_argument("--batch-size", type=int, default=0, metavar="N",
                        help="Découper le classement en lots de N items (0 = pas de découpage, défaut)")
+    _add_directives_arg(p_run)
     _add_prep_args(p_run)
     _add_llm_args(p_run)
     p_run.set_defaults(func=cmd_run)

@@ -5,6 +5,7 @@ import type {
   ResipResult,
   LlmClassementRow,
   ClassementBatch,
+  ClassementDirective,
 } from "@/lib/csv/types";
 import type { WizardStep } from "@/lib/store";
 
@@ -42,6 +43,9 @@ export type StoredProject = {
   llmRawResponse: string;
   llmRawRows: LlmClassementRow[] | null;
   classementBatches: ClassementBatch[] | null;
+  /** Consignes de classement de l'archiviste — optionnel : absent des projets
+   *  enregistrés avant leur introduction. */
+  classementDirectives?: ClassementDirective[];
   csvFinal: ResipResult | null;
 
   lastError: string;

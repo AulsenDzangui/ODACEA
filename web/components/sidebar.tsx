@@ -110,6 +110,7 @@ export function Sidebar({ onCollapse }: { onCollapse?: () => void } = {}) {
     llmRawResponse: state.llmRawResponse,
     llmRawRows: state.llmRawRows,
     classementBatches: state.classementBatches,
+    classementDirectives: state.classementDirectives,
     csvFinal: state.csvFinal,
     lastError: state.lastError,
   });
@@ -488,6 +489,7 @@ function snapshotFromStored(stored: {
   llmRawResponse: string;
   llmRawRows: import("@/lib/csv/types").LlmClassementRow[] | null;
   classementBatches?: import("@/lib/csv/types").ClassementBatch[] | null;
+  classementDirectives?: import("@/lib/csv/types").ClassementDirective[];
   csvFinal: import("@/lib/csv/types").ResipResult | null;
   lastError: string;
 }): ProjectSnapshot {
@@ -507,6 +509,7 @@ function snapshotFromStored(stored: {
     llmRawResponse: stored.llmRawResponse,
     llmRawRows: stored.llmRawRows,
     classementBatches: stored.classementBatches ?? null,
+    classementDirectives: stored.classementDirectives ?? [],
     csvFinal: stored.csvFinal,
     lastError: stored.lastError,
   };

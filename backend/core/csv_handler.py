@@ -635,10 +635,113 @@ def _ancestors_inclusive(name: str, folder_tree: dict, cache: dict | None = None
     return result
 
 
+def _slug_created(name: str) -> str:
+    """Nom technique assaini (FS/SEDA) d'un sous-dossier créé : ponctuation et
+    espaces → « _ », répétitions écrasées, accents conservés (``\\w`` unicode,
+    cohérent avec ``_FOLDER_RE``). Vide si rien d'exploitable."""
+    return re.sub(r"[^\w]+", "_", (name or "").strip(), flags=re.UNICODE).strip("_")
+
+
+def _resolve_targets(
+    targets: pd.Series, folder_tree: dict, allowed_parents: set[str]
+) -> tuple[pd.Series, dict[str, str], list[str]]:
+    """Résout chaque ``TargetFolder`` brut en nom canonique.
+
+    Cas courant : on ne garde que le **nom de feuille** — le LLM produit parfois un
+    chemin ``parent/enfant`` où l'enfant est un vrai dossier du plan.
+
+    Cas création autorisée : quand la feuille n'est **pas** un dossier du plan mais
+    que le segment parent l'est **et** figure dans ``allowed_parents``, la feuille
+    est une **création légitime** sous ce parent. On lui attribue un nom technique
+    canonique ``{préfixe_parent}-{k}_{slug}`` (collision-proof, déterministe) et on
+    la rattache au parent. ``allowed_parents`` vide ⇒ aucune création reconnue →
+    comportement **byte-identique** à l'existant.
+
+    Retourne ``(cibles_résolues, created_folders {canonique: parent}, warnings)``.
+    """
+    def _segments(raw: object) -> list[str]:
+        parts = re.split(r"[/\\]", str(raw).strip())
+        return [p.strip() for p in parts if p.strip()]
+
+    # 1er passage — collecter les demandes de création (parent, slug), dédupliquées.
+    creation_reqs: set[tuple[str, str]] = set()
+    if allowed_parents:
+        for raw in targets:
+            segs = _segments(raw)
+            if len(segs) < 2:
+                continue
+            leaf, parent = segs[-1], segs[-2]
+            if leaf in folder_tree:
+                continue  # dossier réel du plan désigné par son chemin — inchangé
+            slug = _slug_created(leaf)
+            # La garde « ressemble à un fichier » porte sur la feuille **brute** :
+            # l'assainissement écrase le point de l'extension (`facture.pdf` →
+            # `facture_pdf`), ce qui la rendrait invisible après slug.
+            if (
+                parent in folder_tree
+                and parent in allowed_parents
+                and slug
+                and not _looks_like_file(leaf)
+            ):
+                creation_reqs.add((parent, slug))
+
+    # Attribution des noms canoniques (déterministe, sans collision avec le plan
+    # ni entre créations). Numérotation de **position** séquentielle par parent —
+    # les frères créés reçoivent des indices distincts (`1-6-1_`, `1-6-2_`…),
+    # reprenant après le plus grand enfant direct déjà numéroté dans le plan : les
+    # sous-dossiers créés sont ainsi de vrais dossiers du plan, réintégrables tels
+    # quels (`parse_plan_tree` déduit le parent du préfixe).
+    used = set(folder_tree)
+    next_idx: dict[str, int] = {}
+    for parent, _slug in creation_reqs:
+        if parent in next_idx:
+            continue
+        prefix = parent.split("_")[0]
+        child_re = re.compile(rf"{re.escape(prefix)}-(\d+)_")
+        existing = [int(m.group(1)) for f in folder_tree if (m := child_re.match(f))]
+        next_idx[parent] = (max(existing) + 1) if existing else 1
+
+    created_folders: dict[str, str] = {}
+    canon_by_req: dict[tuple[str, str], str] = {}
+    for parent, slug in sorted(creation_reqs):
+        prefix = parent.split("_")[0]
+        idx = next_idx[parent]
+        while f"{prefix}-{idx}_{slug}" in used:
+            idx += 1
+        canon = f"{prefix}-{idx}_{slug}"
+        next_idx[parent] = idx + 1
+        used.add(canon)
+        created_folders[canon] = parent
+        canon_by_req[(parent, slug)] = canon
+
+    # 2e passage — résoudre chaque valeur brute en nom canonique.
+    def _resolve(raw: object) -> str:
+        segs = _segments(raw)
+        if not segs:
+            return str(raw)
+        leaf = segs[-1]
+        if leaf in folder_tree:
+            return leaf
+        if len(segs) >= 2:
+            canon = canon_by_req.get((segs[-2], _slug_created(leaf)))
+            if canon is not None:
+                return canon
+        return leaf  # feuille brute : hors plan / malformée, traitée comme avant
+
+    resolved = targets.astype(str).map(_resolve)
+    warnings = [
+        f"Sous-dossier créé (autorisé) : '{canon}' sous '{parent}'."
+        for canon, parent in created_folders.items()
+    ]
+    return resolved, created_folders, warnings
+
+
 def convert_classement_to_resip(
     df_llm: pd.DataFrame,
     df_original: pd.DataFrame,
     plan_valide: str,
+    *,
+    allowed_parents: set[str] | None = None,
 ) -> tuple:
     """
     Convertit la sortie LLM (Path;TargetFolder;NewTitle) en CSV RESIP complet.
@@ -646,6 +749,14 @@ def convert_classement_to_resip(
     conformité au plan calculée à la source : l'arborescence produite par le
     classement est-elle identique à celle du plan validé (`planMatches`), et sinon
     quels dossiers diffèrent (`foldersOffPlan`, `foldersMissing`).
+
+    `allowed_parents` : ensemble des dossiers du plan sous lesquels le classement
+    est autorisé à **créer des sous-dossiers** (dérivé des consignes de l'archiviste
+    par `core.cla_directives.allowed_parents`). Un `TargetFolder` de la forme
+    `parent_autorisé/Nouveau_sous_dossier` est alors traité comme une **création
+    légitime** — sous-dossier créé et rattaché au parent, jamais à la racine, compté
+    à part (`foldersCreatedAuthorized`) et **exclu** de `foldersOffPlan`. Vide ⇒
+    conversion inchangée (un dossier inventé reste un hors-plan).
     """
     warnings_out = []
 
@@ -659,11 +770,7 @@ def convert_classement_to_resip(
             "Le modèle n'a pas respecté le format Path;TargetFolder;NewTitle."
         )
 
-    # Normaliser TargetFolder : le LLM produit parfois des chemins complets
-    # (ex. "1_Parent/1-1_Enfant") — on n'a besoin que du nom de feuille pour
-    # le lookup dans folder_tree.
     df_llm = df_llm.copy()
-    df_llm["TargetFolder"] = df_llm["TargetFolder"].str.rstrip(r"/\\").str.split(r"[/\\]").str[-1].str.strip()
 
     # Garde-fou déterministe : forcer l'extension du NewTitle à correspondre à
     # celle du Path. Le LLM convertit parfois .docx en .pdf, .xlsx en .csv, etc.
@@ -690,6 +797,19 @@ def convert_classement_to_resip(
     if not folder_tree:
         warnings_out.append("Arborescence technique non trouvée dans le plan — vérifier le format.")
 
+    # Résoudre TargetFolder : cas courant, on ne garde que le nom de feuille (le
+    # LLM produit parfois "1_Parent/1-1_Enfant" alors qu'on n'a besoin que de la
+    # feuille pour le lookup). Cas création autorisée : "parent/Nouveau" sous un
+    # parent de `allowed_parents` → sous-dossier créé, rattaché au parent.
+    allowed = {a for a in (allowed_parents or set()) if a in folder_tree}
+    df_llm["TargetFolder"], created_folders, creation_warnings = _resolve_targets(
+        df_llm["TargetFolder"], folder_tree, allowed
+    )
+    # Arbre effectif = plan + sous-dossiers créés (parent réel connu). Sert au
+    # rattachement, à l'expansion des ancêtres et au calcul des dates ; la
+    # conformité, elle, reste mesurée contre le plan seul (`folder_tree`).
+    folder_tree_eff = {**folder_tree, **created_folders}
+
     # 2. Racine originale
     root_mask = (df_original["File"].fillna("") == ".") & (df_original["ParentID"].fillna("") == "")
     root_rows = df_original[root_mask]
@@ -706,16 +826,19 @@ def convert_classement_to_resip(
     # malformées sont écartées ici (donc aucun RecordGrp) ; leurs items seront
     # rattachés à la racine et signalés dans la boucle ci-dessous. Les vrais
     # dossiers hors plan (sans extension) restent créés et comptés comme écart.
+    # Note : les sous-dossiers créés sous autorisation sont dans `folder_tree_eff`
+    # (pas dans `folder_tree`) mais ne ressemblent jamais à un fichier → ils passent
+    # le filtre comme des dossiers normaux.
     needed = {
         t
         for t in df_llm["TargetFolder"].dropna().astype(str).unique()
-        if t and not (t not in folder_tree and _looks_like_file(t))
+        if t and not (t not in folder_tree_eff and _looks_like_file(t))
     }
     for folder in list(needed):
-        parent = folder_tree.get(folder)
+        parent = folder_tree_eff.get(folder)
         while parent is not None:
             needed.add(parent)
-            parent = folder_tree.get(parent)
+            parent = folder_tree_eff.get(parent)
 
     # 4. Assigner des IDs aux dossiers
     try:
@@ -730,7 +853,7 @@ def convert_classement_to_resip(
     # 6. Lignes RecordGrp
     rg_rows = []
     for folder in sorted(needed):
-        parent = folder_tree.get(folder)
+        parent = folder_tree_eff.get(folder)
         parent_id = folder_ids[parent] if parent and parent in folder_ids else root_id
         row = {
             "ID": folder_ids[folder],
@@ -763,8 +886,10 @@ def convert_classement_to_resip(
 
         # Cible malformée : nom de fichier (extension) au lieu d'un dossier du plan.
         # Écartée de `needed` plus haut → pas dans `folder_ids`. On ne perd pas le
-        # fichier : il est rattaché à la racine et signalé distinctement.
-        malformed = bool(target) and target not in folder_tree and _looks_like_file(target)
+        # fichier : il est rattaché à la racine et signalé distinctement. Un
+        # sous-dossier créé sous autorisation est dans `folder_tree_eff` et sans
+        # extension — jamais concerné.
+        malformed = bool(target) and target not in folder_tree_eff and _looks_like_file(target)
 
         if not target or (target not in folder_ids and not malformed):
             warnings_out.append(f"TargetFolder inconnu : '{target}' pour '{path}'")
@@ -813,7 +938,7 @@ def convert_classement_to_resip(
         if dates is None:
             continue
         start, end = dates
-        for folder in _ancestors_inclusive(target, folder_tree, anc_cache):
+        for folder in _ancestors_inclusive(target, folder_tree_eff, anc_cache):
             if start not in ("", "nan"):
                 cur = folder_starts.get(folder)
                 if cur is None or start < cur:
@@ -850,10 +975,20 @@ def convert_classement_to_resip(
     # Référence = `folder_tree` (le plan), jamais `folder_ids` (dérivé des cibles du
     # LLM, donc circulaire — un dossier inventé y figurerait aussi). Les dossiers
     # produits sont exactement les RecordGrp construits ci-dessus.
+    #
+    # Un **sous-dossier créé sous autorisation** (`created_folders`) n'est ni un
+    # hors-plan (l'archiviste l'a explicitement permis) ni une non-conformité : il
+    # est retiré de `folders_off_plan` et compté à part
+    # (`foldersCreatedAuthorized`), `planMatches` reste signifiant.
     plan_folders = set(folder_tree)
     output_folders = {str(r["File"]) for r in rg_rows}
-    folders_off_plan = sorted(output_folders - plan_folders)
+    created_materialized = sorted(output_folders & set(created_folders))
+    folders_off_plan = sorted(output_folders - plan_folders - set(created_folders))
     folders_missing = sorted(plan_folders - output_folders)
+    # Avertissements de création (autorisés) placés d'abord — information, non alerte.
+    for w in creation_warnings:
+        if w.split("'")[1] in created_materialized:
+            warnings_out.append(w)
     for f in folders_off_plan:
         warnings_out.append(f"Dossier hors plan : '{f}' créé par le classement, absent du plan validé.")
     for f in folders_missing:
@@ -869,6 +1004,9 @@ def convert_classement_to_resip(
         "foldersMissing": folders_missing,
         "itemsMalformed": int(n_malformed),
         "planMatches": bool(folder_tree) and not folders_off_plan and not folders_missing,
+        # Sous-dossiers créés sous autorisation d'une consigne : liste + rattachement.
+        "foldersCreatedAuthorized": created_materialized,
+        "foldersCreatedParents": {f: created_folders[f] for f in created_materialized},
     }
 
     return df_result[ordered_cols], warnings_out, stats

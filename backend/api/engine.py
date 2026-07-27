@@ -31,6 +31,10 @@ from config.settings import MAX_CSV_ROWS
 from core.audit_scan import format_digest, scan_metadata
 from core.source_scan import SourceScanError, scan_source_csv
 from core.apply_classement import build_apply_plan, check_target_guards, iter_apply
+from core.cla_directives import (
+    allowed_parents as directives_allowed_parents,
+)
+from core.cla_directives import directives_from_rows, render_directives
 from core.plan_folders import (
     adopt_markdown_plan,
     looks_like_csv,
@@ -404,9 +408,18 @@ def classement_batch_stream(req: ClassementBatchRequest) -> Iterator[str]:
     else:
         batch = items
 
+    # Consignes de classement de l'archiviste : rendu côté moteur (source unique) ;
+    # vide sans consigne → prompt inchangé.
+    directives_block = render_directives(
+        directives_from_rows(d.model_dump() for d in req.directives),
+        set(parse_plan_tree(req.plan_valide)),
+    ) if req.directives else ""
     user_msg = CLA_001.build_user_message(
-        csv_content=csv_to_string(batch), plan_valide=req.plan_valide
+        csv_content=csv_to_string(batch),
+        plan_valide=req.plan_valide,
+        directives=directives_block,
     )
+    system_prompt = CLA_001.build_system_prompt(directives=bool(directives_block))
     provider = get_provider(model=req.model, api_key=req.api_key, base_url=req.base_url)
 
     full_response = ""
@@ -415,7 +428,7 @@ def classement_batch_stream(req: ClassementBatchRequest) -> Iterator[str]:
     items_done = 0
     start = time.monotonic()
     try:
-        for is_thinking, chunk in provider.stream_with_reasoning(CLA_001.SYSTEM_PROMPT, user_msg):
+        for is_thinking, chunk in provider.stream_with_reasoning(system_prompt, user_msg):
             if is_thinking:
                 yield sse.reasoning(chunk)
                 continue
@@ -464,8 +477,17 @@ def classement_finalize(req: ClassementFinalizeRequest) -> dict:
     if not req.llm_rows:
         return {"error": "Aucune ligne LLM à convertir."}
     df_llm = pd.DataFrame(req.llm_rows).astype(str)
+    # Consignes : les dossiers du plan sous lesquels la création de sous-dossiers
+    # est autorisée. Vide sans consigne → conversion inchangée (un dossier inventé
+    # reste un hors-plan).
+    allowed = directives_allowed_parents(
+        directives_from_rows(d.model_dump() for d in req.directives),
+        set(parse_plan_tree(req.plan_valide)),
+    ) if req.directives else set()
     try:
-        df_final, warnings, stats = convert_classement_to_resip(df_llm, df_original, req.plan_valide)
+        df_final, warnings, stats = convert_classement_to_resip(
+            df_llm, df_original, req.plan_valide, allowed_parents=allowed
+        )
     except Exception as e:
         return {"error": f"Conversion RESIP impossible : {e}"}
     # Contrôle d'intégrité du SIP produit (orphelins, racine, cycles de parenté,
