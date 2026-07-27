@@ -6,6 +6,7 @@ Endpoints :
     POST /parse                  — parse + valide un CSV → lignes/stats/aperçu préparé/estimation tokens
     POST /parse/from-folder      — scanne un dossier local → CSV canonique dérivé + réponse /parse (backend local)
     POST /plan/from-file         — adopte un plan fourni par l'archiviste (CSV « dossiers seuls » ou Markdown), sans LLM
+    POST /plan/materialize       — écrit le plan en dossiers vides réels, à réorganiser dans l'explorateur (backend local)
     POST /plan/from-folder       — scanne un dossier local existant → plan de classement (backend local, sans LLM)
     POST /apply/preview          — aperçu de l'application physique du classement (backend local, aucune écriture)
     POST /apply                  — copie physique du classement vers un dossier cible, en SSE (backend local)
@@ -40,6 +41,7 @@ from api.schemas import (
     ParseRequest,
     PlanFromFileRequest,
     PlanFromFolderRequest,
+    PlanMaterializeRequest,
     ValidateConnectionRequest,
 )
 from config.settings import (
@@ -112,6 +114,18 @@ def plan_from_file(req: PlanFromFileRequest):
     Markdown canonique) **sans appel LLM** → `{plan, planTree, folderCount,
     rootTitle, warnings, format}`. Conversion en mémoire (aucun accès disque)."""
     payload = engine.plan_from_file_payload(req.name, req.content)
+    if "error" in payload:
+        return JSONResponse(payload, status_code=400)
+    return payload
+
+
+@app.post("/plan/materialize")
+def plan_materialize(req: PlanMaterializeRequest):
+    """Matérialise le plan courant en **dossiers vides réels** sous `work_dir`,
+    pour que l'archiviste le réorganise avec ses gestes habituels dans son
+    explorateur de fichiers. Aucun fichier n'est créé ni lu — dossiers seuls.
+    **Backend local uniquement.**"""
+    payload = engine.plan_materialize_payload(req)
     if "error" in payload:
         return JSONResponse(payload, status_code=400)
     return payload

@@ -66,12 +66,29 @@ class PlanFromFileRequest(CamelModel):
     content: str
 
 
+class PlanMaterializeRequest(CamelModel):
+    """Corps de POST /plan/materialize. **Backend local uniquement** : le serveur
+    écrit l'arborescence du plan en **dossiers vides réels** sous `work_dir`
+    (aucun fichier créé ni lu). `clear` vide le répertoire au préalable et n'est
+    honoré qu'avec `confirm=True` — le vidage est destructif."""
+    plan_valide: str
+    work_dir: str
+    clear: bool = False
+    confirm: bool = False
+
+
 class PlanFromFolderRequest(CamelModel):
     """Scanne un dossier existant du poste pour en faire un plan — POST
     /plan/from-folder. **Backend local uniquement** : l'arborescence de `work_dir`
     (chemin sur la machine de l'archiviste) devient le plan de classement. Seuls
-    les noms de dossiers sont lus ; aucun contenu de fichier n'est ouvert."""
+    les noms de dossiers sont lus ; aucun contenu de fichier n'est ouvert.
+
+    `current_plan` (optionnel) : quand il est fourni, la réponse joint un
+    **aperçu des changements** entre ce plan et l'arborescence re-scannée
+    (ajouts, suppressions, renommages, déplacements) — l'archiviste vérifie
+    avant d'adopter."""
     work_dir: str
+    current_plan: str = ""
 
 
 class ApplyPreviewRequest(CamelModel):

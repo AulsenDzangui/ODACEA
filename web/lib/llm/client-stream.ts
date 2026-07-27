@@ -109,6 +109,18 @@ export async function planFromFile(body: {
   return postJson<PlanFromFileResult>("/plan/from-file", body);
 }
 
+/** Aperçu des changements entre le plan courant et l'arborescence re-scannée,
+ *  calculé côté moteur (`core/plan_folders.py::diff_plans`). Chemins exprimés en
+ *  noms techniques nus (« Rubrique/Sous-rubrique »). */
+export type PlanChanges = {
+  added: string[];
+  removed: string[];
+  renamed: { from: string; to: string }[];
+  moved: { from: string; to: string }[];
+  unchanged: number;
+  identical: boolean;
+};
+
 export type PlanFromFolder = {
   plan: string;
   planTree: Record<string, string>;
@@ -116,12 +128,40 @@ export type PlanFromFolder = {
   ignoredFileCount: number;
   rootTitle: string;
   warnings: string[];
+  /** Présent seulement quand un plan courant a été envoyé pour comparaison. */
+  changes?: PlanChanges;
 };
 
 /** Scanne un dossier local existant et en reconstruit un plan de classement
- * (noms de dossiers seuls, backend local). Transport pur : n'envoie qu'un chemin. */
-export async function planFromFolder(workDir: string): Promise<PlanFromFolder> {
-  return postJson<PlanFromFolder>("/plan/from-folder", { workDir });
+ * (noms de dossiers seuls, backend local). Transport pur : n'envoie qu'un chemin
+ * — et, pour un aller-retour par l'explorateur, le plan courant à comparer. */
+export async function planFromFolder(
+  workDir: string,
+  currentPlan?: string,
+): Promise<PlanFromFolder> {
+  return postJson<PlanFromFolder>("/plan/from-folder", { workDir, currentPlan });
+}
+
+export type PlanMaterialized = {
+  folderCount: number;
+  workDir: string;
+  cleared: boolean;
+};
+
+/** Écrit l'arborescence du plan en dossiers vides réels sous `workDir`, pour
+ * édition dans l'explorateur de fichiers (backend local). `clear` vide le
+ * répertoire au préalable et exige `confirm` — il est destructif. */
+export async function planMaterialize(
+  planValide: string,
+  workDir: string,
+  opts: { clear?: boolean; confirm?: boolean } = {},
+): Promise<PlanMaterialized> {
+  return postJson<PlanMaterialized>("/plan/materialize", {
+    planValide,
+    workDir,
+    clear: !!opts.clear,
+    confirm: !!opts.confirm,
+  });
 }
 
 // ── Application physique du classement (copie du SIP vers un dossier cible) ──

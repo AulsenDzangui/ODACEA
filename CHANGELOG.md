@@ -10,6 +10,15 @@ projet adhère au [versionnage sémantique](https://semver.org/lang/fr/)
 
 ### Ajouté
 
+- **Éditer le plan dans l'explorateur de fichiers** : à l'étape d'audit, le plan
+  validé peut être **matérialisé en dossiers vides réels** dans un répertoire de
+  travail du poste. L'archiviste le réorganise alors avec ses gestes habituels
+  — déplacer, renommer, créer, supprimer — puis recharge le dossier : ODACEA
+  reconstruit le plan et affiche un **aperçu des changements** (renommés,
+  déplacés, ajoutés, supprimés) avant adoption. Les préfixes numériques sont
+  recalculés depuis la position, si bien qu'un aller-retour sans modification
+  restitue le plan à l'identique. Aucun fichier n'est lu ni écrit : dossiers
+  vides uniquement (API `POST /plan/materialize`, backend local).
 - **Consignes de classement** : à l'étape de classement, l'archiviste peut
   donner des consignes qui guident l'IA — au niveau du fonds ou **ancrées à un
   dossier précis du plan** (« regrouper CV, lettre de motivation et références

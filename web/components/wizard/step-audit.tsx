@@ -26,6 +26,7 @@ import { ThinkingPanel } from "@/components/thinking-panel";
 import { PlanTree } from "@/components/plan-tree";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { IconAction } from "@/components/wizard/icon-action";
+import { PlanExplorerPanel } from "@/components/wizard/plan-explorer-panel";
 import { PlanFolderPicker } from "@/components/wizard/plan-folder-picker";
 import {
   AlertCircle,
@@ -61,6 +62,7 @@ export function StepAudit() {
     rapportAudit,
     thinkingAudit,
     planValide,
+    setPlanValide,
     planNotes,
     setStep,
     adoptPlan,
@@ -473,6 +475,17 @@ export function StepAudit() {
                 </div>
               ) : (
                 <StreamingMarkdown text={planValide} />
+              )}
+
+              {/* Édition du plan par aller-retour avec l'explorateur de
+                  fichiers — backend local (le serveur écrit sur le poste). */}
+              {planOk && (
+                <div className="rounded-md border border-(--ink-100) bg-(--paper-50) p-3">
+                  <PlanExplorerPanel
+                    planValide={planValide}
+                    onAdopt={setPlanValide}
+                  />
+                </div>
               )}
             </>
           ) : (

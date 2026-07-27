@@ -37,8 +37,11 @@ from core.cla_directives import (
 from core.cla_directives import directives_from_rows, render_directives
 from core.plan_folders import (
     adopt_markdown_plan,
+    diff_plans,
     looks_like_csv,
+    materialize_plan,
     plan_nodes_from_folders_df,
+    plan_nodes_from_plan_text,
     scan_folder_tree,
     serialize_plan_block,
 )
@@ -195,11 +198,43 @@ def plan_from_file_payload(name: str, content: str) -> dict:
         }
 
 
+def plan_materialize_payload(req) -> dict:
+    """Matérialise le plan courant en **dossiers vides réels** sous `work_dir`
+    (**backend local uniquement**), pour que l'archiviste le réorganise dans son
+    explorateur de fichiers. Le vidage préalable (`clear`) n'est honoré qu'avec
+    `confirm=True` — il est destructif."""
+    work_dir = (req.work_dir or "").strip()
+    if not work_dir:
+        return {"error": "Répertoire de travail manquant.", "code": "plan_workdir_missing",
+                "hint": "Indiquez un dossier local où matérialiser l'arborescence du plan."}
+    if req.clear and not req.confirm:
+        return {"error": "Vidage du répertoire non confirmé.", "code": "plan_clear_unconfirmed",
+                "hint": "Le vidage du répertoire de travail exige une confirmation explicite."}
+    try:
+        stats = materialize_plan(
+            req.plan_valide, pathlib.Path(work_dir), clear=req.clear
+        )
+    except ValueError as e:
+        return {"error": str(e), "code": "plan_unreadable",
+                "hint": "Le plan doit contenir une arborescence technique exploitable."}
+    except OSError as e:
+        return {"error": f"Écriture impossible dans {work_dir} : {e}", "code": "plan_workdir_error",
+                "hint": "Vérifiez que le chemin est accessible en écriture depuis le backend local."}
+    return {
+        "folderCount": stats["folderCount"],
+        "workDir": stats["root"],
+        "cleared": bool(req.clear),
+    }
+
+
 def plan_from_folder_payload(req) -> dict:
     """Scanne un dossier existant du poste et en reconstruit un plan de classement
     canonique (**backend local uniquement**) : `{plan, planTree, folderCount,
     ignoredFileCount, rootTitle, warnings}`. Le contenu des fichiers n'est jamais
-    lu — seuls les **noms de dossiers** comptent (les fichiers sont ignorés)."""
+    lu — seuls les **noms de dossiers** comptent (les fichiers sont ignorés).
+
+    Quand `current_plan` est fourni (aller-retour par l'explorateur de fichiers),
+    la réponse joint un **aperçu des changements** (`changes`) vs ce plan."""
     work_dir = (req.work_dir or "").strip()
     if not work_dir:
         return {"error": "Dossier manquant.", "code": "plan_workdir_missing",
@@ -210,7 +245,7 @@ def plan_from_folder_payload(req) -> dict:
         return {"error": str(e), "code": "plan_workdir_missing",
                 "hint": "Le dossier est introuvable ou illisible."}
     plan = serialize_plan_block(nodes, root_title)
-    return {
+    payload: dict = {
         "plan": plan,
         "planTree": parse_plan_tree(plan),
         "folderCount": stats["folderCount"],
@@ -218,6 +253,11 @@ def plan_from_folder_payload(req) -> dict:
         "rootTitle": root_title,
         "warnings": warnings,
     }
+    if (getattr(req, "current_plan", "") or "").strip():
+        payload["changes"] = diff_plans(
+            plan_nodes_from_plan_text(req.current_plan), nodes
+        )
+    return payload
 
 
 # ── Application physique du classement (backend local uniquement) ────────────

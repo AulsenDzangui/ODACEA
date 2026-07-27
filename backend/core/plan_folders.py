@@ -32,6 +32,7 @@ import os
 import re
 import unicodedata
 from dataclasses import dataclass, field
+from difflib import SequenceMatcher
 from pathlib import Path
 
 import pandas as pd
@@ -478,30 +479,53 @@ def diff_plans(current_nodes: list[PlanNode], scanned_nodes: list[PlanNode]) -> 
     renamed: list[dict] = []
     moved: list[dict] = []
 
-    # Nœuds les plus hauts d'abord : apparier un parent absorbe ses descendants.
-    for r in sorted(removed, key=len):
-        if r in matched_rem:
-            continue
-        r_sig = subtree_sig(old, r)
-        for a in sorted(added, key=len):
-            if a in matched_add:
-                continue
-            if r[:-1] == a[:-1] and r[-1] != a[-1] and subtree_sig(new, a) == r_sig:
-                renamed.append({"from": fmt(r), "to": fmt(a)})
-                absorb(r, a)
-                break
+    def order(path: tuple[str, ...]) -> tuple:
+        """Ordre de parcours : les nœuds les plus hauts d'abord, puis
+        alphabétique. Le second critère est indispensable — trier sur la seule
+        profondeur laisse les ex æquo dans l'ordre d'itération d'un `set`, qui
+        varie d'une exécution à l'autre : l'aperçu ne serait pas reproductible."""
+        return (len(path), path)
 
-    for r in sorted(removed, key=len):
+    def closest(ref: str, candidates: list[tuple[str, ...]], part) -> tuple | None:
+        """Parmi les candidats équivalents (même signature de sous-arbre), celui
+        dont le nom **ressemble le plus** à `ref`. Sans ce départage, deux nœuds
+        interchangeables s'apparient dans l'ordre de parcours et l'aperçu annonce
+        un renommage que l'archiviste n'a pas fait. `part` extrait du candidat le
+        fragment comparé (son nom pour un renommage, son parent pour un
+        déplacement — où le nom, lui, est identique par construction)."""
+        if not candidates:
+            return None
+        return max(candidates, key=lambda a: SequenceMatcher(None, ref, part(a)).ratio())
+
+    # Nœuds les plus hauts d'abord : apparier un parent absorbe ses descendants.
+    for r in sorted(removed, key=order):
         if r in matched_rem:
             continue
         r_sig = subtree_sig(old, r)
-        for a in sorted(added, key=len):
-            if a in matched_add:
-                continue
-            if r[-1] == a[-1] and r[:-1] != a[:-1] and subtree_sig(new, a) == r_sig:
-                moved.append({"from": fmt(r), "to": fmt(a)})
-                absorb(r, a)
-                break
+        a = closest(r[-1], [
+            a for a in sorted(added, key=order)
+            if a not in matched_add
+            and r[:-1] == a[:-1] and r[-1] != a[-1]
+            and subtree_sig(new, a) == r_sig
+        ], lambda a: a[-1])
+        if a is not None:
+            renamed.append({"from": fmt(r), "to": fmt(a)})
+            absorb(r, a)
+
+    for r in sorted(removed, key=order):
+        if r in matched_rem:
+            continue
+        r_sig = subtree_sig(old, r)
+        # Un déplacement conserve le nom : le départage porte sur le parent.
+        a = closest(fmt(r[:-1]), [
+            a for a in sorted(added, key=order)
+            if a not in matched_add
+            and r[-1] == a[-1] and r[:-1] != a[:-1]
+            and subtree_sig(new, a) == r_sig
+        ], lambda a: fmt(a[:-1]))
+        if a is not None:
+            moved.append({"from": fmt(r), "to": fmt(a)})
+            absorb(r, a)
 
     final_added = sorted(fmt(a) for a in added - matched_add)
     final_removed = sorted(fmt(r) for r in removed - matched_rem)

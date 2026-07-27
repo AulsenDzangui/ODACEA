@@ -136,3 +136,102 @@ def test_plan_from_folder_missing_dir():
     resp = client.post("/plan/from-folder", json={"workDir": ""})
     assert resp.status_code == 400
     assert resp.json()["code"] == "plan_workdir_missing"
+
+
+# ── Aller-retour par l'explorateur de fichiers ───────────────────────────────
+
+def _block():
+    nodes, root_title, _w, _s = pf.plan_nodes_from_folders_df(_df(_FOLDERS_CSV))
+    return pf.serialize_plan_block(nodes, root_title)
+
+
+def test_plan_materialize_endpoint_writes_empty_folders(tmp_path):
+    work = tmp_path / "work"
+    data = client.post(
+        "/plan/materialize", json={"planValide": _block(), "workDir": str(work)}
+    ).json()
+    assert data["folderCount"] == 3
+    assert data["cleared"] is False
+    # Dossiers seuls : aucun fichier n'est écrit.
+    assert all(p.is_dir() for p in work.rglob("*"))
+    assert {p.name for p in work.iterdir()} == {"1_A_pilotage", "2_B_dossiers"}
+
+
+def test_plan_materialize_refuses_unconfirmed_clear(tmp_path):
+    resp = client.post(
+        "/plan/materialize",
+        json={"planValide": _block(), "workDir": str(tmp_path), "clear": True},
+    )
+    assert resp.status_code == 400
+    assert resp.json()["code"] == "plan_clear_unconfirmed"
+
+
+def test_plan_materialize_missing_workdir():
+    resp = client.post("/plan/materialize", json={"planValide": _block(), "workDir": ""})
+    assert resp.status_code == 400
+    assert resp.json()["code"] == "plan_workdir_missing"
+
+
+def test_round_trip_surfaces_explorer_edits_as_changes(tmp_path):
+    """Le geste réel de l'archiviste : matérialiser, réorganiser dans
+    l'explorateur (ici simulé par des opérations de dossiers), re-scanner —
+    l'aperçu doit nommer exactement ce qui a bougé."""
+    work = tmp_path / "work"
+    block = _block()
+    client.post("/plan/materialize", json={"planValide": block, "workDir": str(work)})
+
+    # Réorganisation : renommage, création, déplacement, suppression.
+    (work / "1_A_pilotage").rename(work / "1_Pilotage_general")
+    (work / "3_Nouveau_dossier").mkdir()
+    (work / "2_B_dossiers" / "2-1_sous").rename(work / "2-1_sous")
+    (work / "2_B_dossiers").rmdir()
+
+    data = client.post(
+        "/plan/from-folder", json={"workDir": str(work), "currentPlan": block}
+    ).json()
+    changes = data["changes"]
+    assert changes["identical"] is False
+    # Chaque geste est nommé pour ce qu'il est — le renommage n'est pas apparié
+    # à la première feuille venue (les candidats sont départagés par ressemblance).
+    assert changes["renamed"] == [{"from": "A_pilotage", "to": "Pilotage_general"}]
+    assert changes["moved"] == [{"from": "B_dossiers/sous", "to": "sous"}]
+    assert changes["added"] == ["Nouveau_dossier"]
+    assert changes["removed"] == ["B_dossiers"]
+
+
+def test_diff_pairing_is_deterministic(tmp_path):
+    """Deux appariements possibles ne doivent pas dépendre de l'ordre d'itération
+    d'un `set` : l'aperçu doit être le même à chaque appel."""
+    work = tmp_path / "work"
+    block = _block()
+    client.post("/plan/materialize", json={"planValide": block, "workDir": str(work)})
+    (work / "1_A_pilotage").rename(work / "1_Pilotage_general")
+    (work / "3_Autre").mkdir()
+
+    runs = {
+        repr(
+            client.post(
+                "/plan/from-folder", json={"workDir": str(work), "currentPlan": block}
+            ).json()["changes"]
+        )
+        for _ in range(3)
+    }
+    assert len(runs) == 1
+
+
+def test_round_trip_without_edits_reports_identical(tmp_path):
+    work = tmp_path / "work"
+    block = _block()
+    client.post("/plan/materialize", json={"planValide": block, "workDir": str(work)})
+    data = client.post(
+        "/plan/from-folder", json={"workDir": str(work), "currentPlan": block}
+    ).json()
+    assert data["changes"]["identical"] is True
+
+
+def test_scan_without_current_plan_omits_changes(tmp_path):
+    """Le picker de plan (adoption d'un dossier existant) n'envoie pas de plan
+    courant : la réponse reste celle d'avant, sans aperçu."""
+    (tmp_path / "Ressources humaines").mkdir()
+    data = client.post("/plan/from-folder", json={"workDir": str(tmp_path)}).json()
+    assert "changes" not in data
