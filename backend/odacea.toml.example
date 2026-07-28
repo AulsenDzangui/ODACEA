@@ -1,0 +1,32 @@
+# Configuration ODACEA — copier en `odacea.toml` à la racine du projet
+# (ou au-dessus du répertoire de travail), ou pointer avec `--config FILE`.
+#
+# But : fixer les options récurrentes une fois pour toutes, au lieu de répéter
+# les flags à chaque appel de la CLI. Toutes les clés sont facultatives.
+#
+# Précédence : option en ligne de commande > odacea.toml > .env / défauts.
+# (Un flag passé en CLI l'emporte toujours sur la valeur du fichier.)
+
+[llm]
+# Modèle LiteLLM par défaut (équivaut à --model ; surclasse DEFAULT_MODEL du .env).
+# model = "gpt-5.1"
+# URL d'un serveur local OpenAI-compatible (LM Studio, JAN, Ollama) — --base-url.
+# base_url = "http://localhost:1234/v1"
+# Note : la clé API n'est PAS lue ici (secret) — utiliser .env ou --api-key.
+
+[prep]
+# Options de préparation du CSV envoyé à l'audit (AUD-001).
+# filter_columns = true   # false ⇒ envoyer toutes les colonnes (--no-filter-columns)
+# clean_dates    = true   # false ⇒ conserver les dates des Items (--no-clean-dates)
+# sample_items   = true   # false ⇒ envoyer tous les Items (--no-sample)
+# sample_n       = 5      # nb max d'Items par dossier parent (--sample-n)
+# include_items  = true   # false ⇒ arborescence seule, aucun fichier à l'audit (--no-items)
+# auto_measures  = true   # false ⇒ pas de digest déterministe (--no-auto-measures)
+# description    = false  # true  ⇒ transmettre Content.Description (--description)
+
+[classement]
+# Options du classement (CLA-001).
+# batch_size  = 0      # 0 = pas de découpage ; sinon lots de N items (--batch-size)
+# avis        = true   # false ⇒ ne pas demander l'avis de classement (--no-avis)
+# ref         = false  # true  ⇒ méthode « Ref » (identifiant court) au lieu de « Path »
+# concurrency = 1      # lots CLA-001 en parallèle (cloud, max 4) — local : forcé séquentiel (--concurrency)

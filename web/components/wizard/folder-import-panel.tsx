@@ -2,7 +2,11 @@
 
 import { useState } from "react";
 import { useWizard } from "@/lib/store";
-import { parseFromFolder, type ScanStats } from "@/lib/llm/client-stream";
+import {
+  parseFromFolder,
+  formatApiError,
+  type ScanStats,
+} from "@/lib/llm/client-stream";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -30,14 +34,21 @@ import {
  * `parseFromFolder` (`POST /parse/from-folder`) puis remonte le CSV dérivé à
  * l'appelant (`onImported`), qui le traite comme un CSV importé. Aucune logique
  * métier en TypeScript.
+ *
+ * Masqué en mode démonstration (l'endpoint est refusé côté serveur) : le parent
+ * ne rend ce composant qu'en backend local.
  */
 export function FolderImportPanel({
   prep,
   batchSize,
+  model,
+  baseUrl,
   onImported,
 }: {
   prep: Record<string, unknown>;
   batchSize: number;
+  model: string;
+  baseUrl: string;
   onImported: (derivedCsv: string, filename: string) => void | Promise<void>;
 }) {
   const { sourceRoot, setSourceRoot } = useWizard();
@@ -53,13 +64,19 @@ export function FolderImportPanel({
     setError(null);
     setScan(null);
     try {
-      const res = await parseFromFolder({ sourceRoot: root, prep, batchSize });
+      const res = await parseFromFolder({
+        sourceRoot: root,
+        prep,
+        batchSize,
+        model,
+        baseUrl,
+      });
       setScan(res.scan);
       setDerivedCsv(res.derivedCsv);
       const name = root.replace(/[/\\]+$/, "").split(/[/\\]/).pop() || "vrac";
       await onImported(res.derivedCsv, `${name} (dossier local scanné)`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(formatApiError(err));
     } finally {
       setBusy(false);
     }

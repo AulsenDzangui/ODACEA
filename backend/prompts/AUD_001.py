@@ -18,6 +18,19 @@
 # identique entre les deux variantes : extract_plans() et parse_plan_tree() en
 # dépendent.
 
+# Version du prompt : à incrémenter à CHAQUE
+# modification du texte du prompt (fragments, SYSTEM_PROMPT*, build_user_message).
+# Renvoyée dans les `done{promptVersion}` de l'API et consignée dans les rapports
+# d'évaluation (`cli.py eval`) — indispensable pour interpréter d'anciens résultats.
+#
+# 1.1.0 — respect de l'ordre originel « by design » : le plan dérive par défaut
+# de l'ordre existant du fonds (verdict STRUCTURÉ / PARTIELLEMENT STRUCTURÉ /
+# ABSENT, liberté de conception proportionnelle au désordre constaté), tout
+# écart structurel doit corriger un défaut nommé d'une liste fermée, et le
+# gabarit documente les écarts (« Écarts à l'ordre existant »). La refonte
+# libre reste possible via la note contextuelle (gabarit opt-out côté front).
+PROMPT_VERSION = "1.1.0"
+
 # ── Fragments partagés ───────────────────────────────────────────────────────
 
 _ROLE_CONTEXT = """\
@@ -27,9 +40,14 @@ Vous êtes un assistant archiviste spécialisé dans l'analyse de structures doc
 
 
 # Gabarit de la Partie 2 (plan de classement). Identique entre les deux variantes.
-# Contient le bloc `<!-- PLAN_STRUCTURE_START/END -->` extrait en aval.
+# Contient le bloc `<!-- PLAN_STRUCTURE_START/END -->` extrait en aval. Le verdict
+# « Ordre existant » et la section « Écarts à l'ordre existant » restent HORS des
+# balises PLAN_STRUCTURE : extract_plans()/parse_plan_tree() (et la copie miroir
+# web/lib/csv/plan-tree.ts) ne voient qu'un bloc arborescence inchangé.
 _PLAN_BLOCK = """\
-### Plan retenu — [Fonctionnel | Thématique | Mixte | autre] [500–800 car.]
+### Plan retenu — [Dérivé de l'ordre existant | Fonctionnel | Thématique | Mixte | autre] [500–800 car.]
+
+**Ordre existant :** STRUCTURÉ | PARTIELLEMENT STRUCTURÉ | ABSENT — [justification en 1 phrase, appuyée sur les constats de la structuration existante]
 
 <!-- PLAN_STRUCTURE_START -->
 **Arborescence technique** *(chaque dossier porte son titre descriptif puis son nom technique, séparés par « → » ; dossiers uniquement, jamais de fichiers individuels)* **:**
@@ -47,19 +65,44 @@ Fonds — [Nom du fonds (Nom producteur, AAAA–AAAA)] → Dossier_racine/
 ```
 <!-- PLAN_STRUCTURE_END -->
 
-**Approche retenue :** [Fonctionnelle / Thématique / Mixte / autre — justification en 1–2 phrases]
+**Approche retenue :** [Dérivée de l'ordre existant / Fonctionnelle / Thématique / Mixte / autre — justification en 1–2 phrases]
 **Avantages :** [2 max, une ligne chacun]
-**Inconvénients :** [2 max, une ligne chacun]"""
+**Inconvénients :** [2 max, une ligne chacun]
+**Écarts à l'ordre existant :** [uniquement les rubriques fusionnées, déplacées, supprimées ou créées — une ligne chacune : `nom_technique — écart (défaut corrigé)`. Toute rubrique non listée est réputée conservée de l'ordre existant. Si aucun écart : "Aucun — l'ordre existant est conservé intégralement." Si l'ordre existant est ABSENT : "Plan conçu de zéro (ordre existant absent)."]"""
 
 
 # Consignes de conception du plan (méthodologie de la Partie 2). Partagées.
+# Respect de l'ordre originel « by design » (1.1.0) : la liberté de conception
+# est proportionnelle au désordre constaté — l'existant est le socle, seuls les
+# défauts nommés justifient un écart. La liste des défauts est FERMÉE et chiffrée
+# (leçon du test du 2026-07-05 : une échappatoire vague ou un seuil implicite →
+# le modèle réinvente le plan ou produit une profondeur erratique).
 _PLAN_METHOD = """\
-* **Choisir librement** l'approche la mieux adaptée au fonds analysé : fonctionnelle (par activité), thématique (par sujet), chronologique, par entité productrice, mixte, ou toute autre approche pertinente.
-* Si une note contextuelle de l'archiviste indique une préférence d'approche, s'y conformer.
+* **Qualifier d'abord l'ordre existant.** L'organisation actuelle des dossiers est l'œuvre du producteur : c'est un élément de contexte à valeur archivistique (respect de l'ordre originel), le point de départ du plan — jamais une simple source d'inspiration. Rendre un verdict :
+  * **STRUCTURÉ** — une logique de classement couvre l'essentiel du fonds ;
+  * **PARTIELLEMENT STRUCTURÉ** — un socle organisé côtoie des zones sans logique ;
+  * **ABSENT** — aucune logique décelable.
+
+* **La liberté de conception dépend de ce verdict :**
+  * STRUCTURÉ → le plan **dérive de l'arborescence existante** : chaque dossier existant reste une rubrique du plan, à la même place dans la hiérarchie.
+  * PARTIELLEMENT STRUCTURÉ → conserver le socle organisé tel quel ; ne réorganiser que les zones sans logique.
+  * ABSENT → concevoir librement l'approche la mieux adaptée : fonctionnelle (par activité), thématique (par sujet), chronologique, par entité productrice, mixte, ou toute autre approche pertinente.
+
+* **Tout écart structurel à l'ordre existant** (fusion, déplacement, suppression ou création de rubrique) doit corriger un **défaut constaté**, parmi cette liste fermée :
+  1. **rubrique en doublon** — deux dossiers couvrant la même activité ;
+  2. **dossier fourre-tout** — au moins 10 fichiers d'une même typologie sans sous-dossier dédié → créer le sous-dossier ;
+  3. **série éclatée** — plus de 20 dossiers d'une même thématique couvrant des dates différentes → les organiser chronologiquement (par année ou période) ;
+  4. **artefact de support** — dossier reflétant un support ou un emplacement technique (clé USB, « Mes documents », copie de sauvegarde) et non une activité ;
+  5. **dossier vide** — signalé dans les constats déterministes ;
+  6. **profondeur excessive** — au plus 4 niveaux de dossiers sous la racine : les fichiers d'un dossier plus profond se classent dans son ancêtre au dernier niveau autorisé.
+
+  La normalisation des intitulés n'est pas un écart : renommer une rubrique conservée est toujours permis.
+
+* Si une note contextuelle de l'archiviste indique une préférence (approche, seuils, refonte libre), s'y conformer : elle prime sur les règles ci-dessus.
 
 * Pour le plan proposé :
   1. **Présenter** une arborescence unique de dossiers — jamais de fichiers individuels — où chaque dossier porte d'abord son titre descriptif (ex: "Formation et scolarité"), puis, séparé par « → », son nom technique pour système de fichiers (ex: `1_Formation_Scolarite/`). Les titres descriptifs doivent être suffisamment explicites pour qu'un agent de classement rattache chaque fichier au bon dossier sans règle supplémentaire.
-  2. **Justifier** brièvement l'approche retenue et ses avantages/inconvénients."""
+  2. **Justifier** le verdict sur l'ordre existant et l'approche retenue (avantages/inconvénients), et **documenter chaque écart** dans « Écarts à l'ordre existant »."""
 
 
 _EDGE_CASES = """\
@@ -81,7 +124,7 @@ SYSTEM_PROMPT = f"""\
 
 * **Analyser** les métadonnées d'un vrac bureautique fournies via un fichier CSV (contenant à minima les chemins, extensions, et dates). Une colonne `Content.Description` peut être présente : lorsqu'elle est renseignée, c'est l'indice le plus fiable sur le contenu réel d'un document — la **prioriser** pour identifier les activités, les typologies et concevoir le plan de classement.
 * **Produire**, en une seule réponse, un rapport d'analyse complet.
-* **Proposer** le plan de classement le mieux adapté au fonds analysé.
+* **Proposer** le plan de classement le mieux adapté au fonds analysé, en prenant l'ordre existant comme point de départ (respect de l'ordre originel — voir la méthodologie de la Partie 2).
 
 ## Méthodologie de travail
 
@@ -125,7 +168,7 @@ Produire un livrable unique composé de trois parties, en suivant les étapes ci
 
 #### Analyse de l'arborescence et du nommage
 
-* **Identifier** toute logique de classement préexistante.
+* **Identifier** toute logique de classement préexistante — c'est elle qui fonde le verdict « Ordre existant » de la Partie 2.
 * **Diagnostiquer** les problèmes de nommage (caractères spéciaux, espaces, incohérences).
 
 ### Partie 2 : Plan de classement
@@ -207,7 +250,7 @@ SYSTEM_PROMPT_BRIEF = f"""\
 L'archiviste a **déjà réalisé son audit** ou connaît le vrac. Vous ne devez produire que le **livrable principal** : le **plan de classement**.
 
 * **Analyser** les métadonnées d'un vrac bureautique fournies via un fichier CSV (chemins, extensions, dates). Une colonne `Content.Description`, lorsqu'elle est renseignée, est l'indice le plus fiable sur le contenu réel — la **prioriser** pour concevoir le plan.
-* **Produire UNIQUEMENT le plan de classement** le mieux adapté au fonds analysé.
+* **Produire UNIQUEMENT le plan de classement** le mieux adapté au fonds analysé, en prenant l'ordre existant comme point de départ (respect de l'ordre originel — voir la méthodologie).
 * **Ne PAS produire** de rapport d'état des lieux (volumétrie, formats, doublons, RGPD, nommage) ni de notes pour l'archiviste. Aucun texte hors du plan.
 
 ## Méthodologie de travail
@@ -239,15 +282,17 @@ def build_user_message(
         else ""
     )
     # Constats mécaniques calculés de façon déterministe sur les métadonnées
-    # (volumétrie, formats uniquement). Fournis comme source faisant autorité :
-    # un modèle local compte/agrège mal sur de gros CSV — il doit s'appuyer sur
-    # ces chiffres plutôt que de les recalculer. Les analyses (doublons, nommage,
-    # bruit) ne sont volontairement PAS pré-calculées : elles relèvent du modèle.
+    # (volumétrie, formats, bruit numérique). Fournis comme source faisant
+    # autorité : un modèle local compte/agrège mal sur de gros CSV — il doit
+    # s'appuyer sur ces chiffres plutôt que de les recalculer. Le bruit numérique
+    # est un appariement à liste fixe (noms système, verrous `~$…`, extensions
+    # temporaires) : mécanique, sans jugement. Les analyses sémantiques (doublons,
+    # nommage) ne sont PAS pré-calculées : elles relèvent du modèle.
     digest_block = (
-        "**Constats déterministes (volumétrie et formats, calculés sur les métadonnées — source faisant autorité) :**\n\n"
+        "**Constats déterministes (volumétrie, formats et bruit numérique, calculés sur les métadonnées — source faisant autorité) :**\n\n"
         f"{metadata_digest.strip()}\n\n"
-        "> Réutilisez ces chiffres tels quels pour la volumétrie et les formats : "
-        "ne les recalculez pas, appuyez votre analyse dessus.\n\n"
+        "> Réutilisez ces chiffres tels quels pour la volumétrie, les formats et le "
+        "bruit numérique : ne les recalculez pas, appuyez votre analyse dessus.\n\n"
         if metadata_digest and metadata_digest.strip()
         else ""
     )

@@ -1,4 +1,4 @@
-"""Maîtrise du plan de classement par l'archiviste.
+"""Souveraineté de l'archiviste sur le plan de classement.
 
 Deux voies, **sans aucun appel LLM** :
 
@@ -6,15 +6,15 @@ Deux voies, **sans aucun appel LLM** :
   déjà (CSV Resip « dossiers seuls » ou bloc Markdown canonique) en un document de
   plan minimal **parsable par `csv_handler.parse_plan_tree`**, adopté directement
   comme plan validé (bypass de l'audit LLM).
-- **Éditer par l'explorateur de fichiers** : *matérialiser* l'arborescence du
+- **Éditer par l'Explorateur Windows** : *matérialiser* l'arborescence du
   plan en **dossiers vides réels** sur le poste (`materialize_plan`), laisser
   l'archiviste la réorganiser avec ses gestes habituels, puis *re-scanner* le
   répertoire (`scan_folder_tree`) pour reconstruire le plan canonique.
 
-Tout le métier vit ici, côté moteur ; les interfaces (API, CLI, et
+Tout le métier vit ici, côté moteur (contrainte) ; les interfaces (API, CLI, et
 via l'API le front) ne transmettent qu'un chemin ou un texte. **Aucun contenu
 documentaire n'est lu ni écrit** : la matérialisation crée des dossiers *vides*, le
-scan ne lit que des **noms** de dossiers et ignore les fichiers . Rien d'autre
+scan ne lit que des **noms** de dossiers et ignore les fichiers. Rien d'autre
 que `pathlib`/`os` standard — aucune dépendance nouvelle.
 
 Format canonique : le bloc « Arborescence technique » du gabarit AUD-001, identique
@@ -137,7 +137,7 @@ def _flatten_slugs(nodes: list[PlanNode]) -> int:
     return sum(1 + _flatten_slugs(n.children) for n in nodes)
 
 
-# ── adopter un plan « dossiers seuls » (CSV Resip) ──────────────────────
+# ── adopter un plan « dossiers seuls » (CSV Resip) ───────────────────────────
 
 def _sort_id_key(value: str):
     """Tri stable des enfants par ID : numérique si possible, lexical en repli."""
@@ -230,7 +230,7 @@ def plan_nodes_from_folders_df(
     return nodes, root_title, warnings, stats
 
 
-# ── adopter un plan Markdown (bloc canonique déjà écrit) ────────────────
+# ── adopter un plan Markdown (bloc canonique déjà écrit) ─────────────────────
 
 def adopt_markdown_plan(text: str) -> tuple[str, list[str]]:
     """Adopte un plan Markdown fourni (typiquement exporté d'un projet ODACEA
@@ -260,7 +260,7 @@ def looks_like_csv(name: str, content: str) -> bool:
     return ";" in first and "→" not in content and "->" not in content
 
 
-# ── matérialiser le plan en dossiers vides réels ────────────────────────
+# ── matérialiser le plan en dossiers vides réels ─────────────────────────────
 
 # Caractères interdits par le système de fichiers Windows dans un nom de dossier.
 _FS_INVALID_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
@@ -288,10 +288,10 @@ def materialize_plan(plan_valide: str, root: Path, *, clear: bool = False) -> di
 
     Chaque dossier porte son **nom technique verbatim** (`1-1_Inscriptions_effectifs`)
     — le tri alphabétique de l'Explorateur restitue l'ordre du plan grâce aux
-    préfixes. Aucun fichier n'est créé . ``clear=True`` **vide d'abord** le
+    préfixes. Aucun fichier n'est créé. ``clear=True`` **vide d'abord** le
     répertoire de travail (uniquement son contenu — jamais ``root`` lui-même ni quoi
     que ce soit au-dehors) : réservé à une action explicite et confirmée par
-    l'archiviste (garde-fou appliqué par l'appelant).
+    l'archiviste (garde-fou, appliqué par l'appelant).
 
     Lève ``ValueError`` si le plan n'a pas d'arborescence exploitable.
     """
@@ -321,7 +321,7 @@ def materialize_plan(plan_valide: str, root: Path, *, clear: bool = False) -> di
 def _clear_directory(root: Path) -> None:
     """Supprime **le contenu** de ``root`` (dossiers vides du plan précédent), jamais
     ``root`` lui-même ni rien au-dehors. Refuse de supprimer un dossier non vide de
-    fichiers pour ne pas détruire de contenu documentaire ."""
+    fichiers pour ne pas détruire de contenu documentaire."""
     import shutil
 
     for entry in root.iterdir():
@@ -331,7 +331,7 @@ def _clear_directory(root: Path) -> None:
             entry.unlink()
 
 
-# ── re-scanner le répertoire → plan canonique reconstruit ───────────────
+# ── re-scanner le répertoire → plan canonique reconstruit ────────────────────
 
 def _scan_sort_key(name: str):
     """Ordre des dossiers frères au scan : par préfixe numérique quand présent
@@ -349,7 +349,7 @@ def scan_folder_tree(root: Path) -> tuple[list[PlanNode], str, list[str], dict]:
     """Re-scanne un répertoire de travail et reconstruit l'arbre `PlanNode`
     canonique : slugification des noms libres, préfixes recalculés depuis le tri
     (`scan_folder_tree` ne pose pas les préfixes — la sérialisation le fait depuis
-    la position). Les **fichiers présents sont ignorés et signalés** .
+    la position). Les **fichiers présents sont ignorés et signalés**.
 
     Retourne ``(nodes, root_title, warnings, stats)``. Lève ``ValueError`` si
     ``root`` n'est pas un répertoire."""
@@ -405,7 +405,7 @@ def scan_folder_tree(root: Path) -> tuple[list[PlanNode], str, list[str], dict]:
     return nodes, root_title, warnings, stats
 
 
-# ── Aperçu des changements : plan courant ↔ plan re-scanné ──────────────
+# ── Aperçu des changements : plan courant ↔ plan re-scanné ───────────────────
 
 def _slug_paths(nodes: list[PlanNode], prefix: tuple[str, ...] = ()) -> list[tuple[str, ...]]:
     """Ensemble des « chemins de slugs » (racine→feuille) d'un arbre — clé

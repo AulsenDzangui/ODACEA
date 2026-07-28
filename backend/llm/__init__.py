@@ -1,4 +1,6 @@
-from llm.litellm_provider import LiteLLMProvider
+from llm.litellm_provider import LiteLLMProvider, friendly_llm_error, llm_error_info
+
+__all__ = ["LiteLLMProvider", "friendly_llm_error", "llm_error_info", "get_provider"]
 
 
 def get_provider(

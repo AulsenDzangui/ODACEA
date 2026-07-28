@@ -8,7 +8,6 @@ import math
 
 from core.tokens import format_duration, format_tokens
 
-
 # ── format_tokens ─────────────────────────────────────────────────────────────
 
 def test_format_tokens_below_thousand_is_plain():

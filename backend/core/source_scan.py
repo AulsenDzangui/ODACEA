@@ -1,7 +1,7 @@
 """Scan d'un dossier local → CSV canonique Archifiltre/SEDA.
 
 À l'entrée du pipeline, ODACEA attend un CSV exporté par Archifiltre Docs. Le
-backend étant **local**, il peut se
+backend étant **local** (modèle `enrich`, `plan_folders`), il peut se
 passer de cette étape chronophage et **scanner le dossier du vrac directement** :
 ce module dérive le CSV canonique à partir de l'arborescence réelle, comme le
 ferait Archifiltre, mais sans installer ni lancer Archifiltre.
@@ -74,7 +74,7 @@ def _date(ts: float) -> str:
 
 
 class SourceScanError(ValueError):
-    """Scan refusé (racine invalide, ou volumétrie au-delà de la garde mémoire).
+    """Scan refusé (racine invalide, ou volumétrie au-delà de la garde).
 
     Porte un ``hint`` actionnable, comme ``api.engine.CsvLimitError``."""
 

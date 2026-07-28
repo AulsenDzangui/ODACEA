@@ -1,6 +1,6 @@
 """
 Version réduite (~80 fichiers) de l'arborescence bureautique fictive,
-calibrée pour tester l'app sur un modèle local 14B (Qwen, Mistral, etc.).
+calibrée pour tester l'app sur un modèle local compact.
 
 Conserve un échantillon de chaque pattern de désordre du script principal :
 doublons, versions cumulées, naming scanner, casse/accents incohérents,

@@ -87,7 +87,9 @@ function RootNode({
         aria-expanded={open}
       >
         <span className="text-[14px] leading-none">{open ? "📂" : "📁"}</span>
-        <span className="flex-1 font-semibold text-(--ink-900)">{title}</span>
+        <span className="flex-1 font-semibold text-(--ink-900)">
+          Fonds — {title}
+        </span>
       </button>
       {open && (
         <div className="ml-3.25 mt-0.5 border-l-[1.5px] border-[rgba(120,120,120,0.2)] pl-4">

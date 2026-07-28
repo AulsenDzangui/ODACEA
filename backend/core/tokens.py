@@ -14,9 +14,16 @@ import math
 
 import pandas as pd
 
-from core.csv_handler import csv_to_string, prepare_for_llm, prepare_for_classement
-from prompts.AUD_001 import SYSTEM_PROMPT as AUD_SYSTEM, build_user_message as build_aud_msg
-from prompts.CLA_001 import SYSTEM_PROMPT as CLA_SYSTEM, build_user_message as build_cla_msg
+from core.csv_handler import (
+    classement_llm_csv,
+    csv_to_string,
+    prepare_for_classement,
+    prepare_for_llm,
+)
+from prompts.AUD_001 import SYSTEM_PROMPT as AUD_SYSTEM
+from prompts.AUD_001 import build_user_message as build_aud_msg
+from prompts.CLA_001 import SYSTEM_PROMPT as CLA_SYSTEM
+from prompts.CLA_001 import build_user_message as build_cla_msg
 
 # Approximation conservatrice : les métadonnées archivistiques (chemins + dates +
 # titres français) sont plus denses que l'anglais pur mais moins que du code →
@@ -28,6 +35,14 @@ def _chars_to_tokens(chars: int) -> int:
     return math.ceil(chars / CHARS_PER_TOKEN)
 
 
+def estimate_text_tokens(text: str) -> int:
+    """Estimation a priori du nombre de tokens d'un texte (~3,5 car./token).
+
+    Variante publique de `_chars_to_tokens` pour estimer le coût d'un prompt
+    déjà assemblé (cf. le mode `--dry-run` de la CLI)."""
+    return _chars_to_tokens(len(text))
+
+
 def estimate_tokens(
     df: pd.DataFrame,
     *,
@@ -35,6 +50,7 @@ def estimate_tokens(
     clean_dates: bool = True,
     sample_items_n: int = 0,
     include_description: bool = False,
+    include_items: bool = True,
     batch_size: int = 0,
 ) -> dict:
     """Estime le coût en tokens d'entrée pour AUD-001 et CLA-001.
@@ -42,6 +58,8 @@ def estimate_tokens(
     Retourne un dict : audit_tokens, classement_tokens_per_batch,
     classement_batches, classement_total_tokens, total_tokens.
     Le plan d'audit (non connu à ce stade) est exclu de l'estimation CLA-001.
+    `include_items=False` (arborescence seule) ne concerne que l'audit — le
+    classement traite toujours tous les Item.
     """
     # ── AUD-001 ──────────────────────────────────────────────────────────────
     prepared = prepare_for_llm(
@@ -50,6 +68,7 @@ def estimate_tokens(
         clean_dates=clean_dates,
         sample_items_n=sample_items_n,
         include_description=include_description,
+        include_items=include_items,
     )
     audit_csv = csv_to_string(prepared)
     audit_user_msg = build_aud_msg(audit_csv, observation="")
@@ -69,7 +88,7 @@ def estimate_tokens(
     # builder réel pour rester synchronisé avec le prompt.
     cla_base_chars = len(CLA_SYSTEM) + len(build_cla_msg(csv_content="", plan_valide=""))
     per_batch = [
-        _chars_to_tokens(cla_base_chars + len(csv_to_string(batch)))
+        _chars_to_tokens(cla_base_chars + len(classement_llm_csv(batch)))
         for batch in batches
     ]
 

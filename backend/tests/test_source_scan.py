@@ -105,7 +105,7 @@ def test_scan_max_items_guard(tmp_path: Path) -> None:
     with pytest.raises(SourceScanError) as exc:
         scan_source_tree(tmp_path, max_items=2)
     assert "trop volumineux" in str(exc.value)
-    assert exc.value.hint  # message actionnable
+    assert exc.value.hint # message actionnable
 
 
 def test_scan_missing_root_raises(tmp_path: Path) -> None:

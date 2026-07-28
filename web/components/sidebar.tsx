@@ -11,12 +11,24 @@ import {
   duplicateProject,
   renameProject,
   uniqueProjectName,
+  exportProjectJson,
+  importProjectJson,
+  estimateStorageUsage,
+  LOCALSTORAGE_WARN_RATIO,
+  LOCALSTORAGE_BUDGET_BYTES,
   type StoredProjectIndexEntry,
 } from "@/lib/persistence";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
 import {
   Trash2,
   Plus,
@@ -26,6 +38,10 @@ import {
   PanelLeftClose,
   Check,
   X,
+  Download,
+  Upload,
+  AlertTriangle,
+  MoreHorizontal,
 } from "lucide-react";
 
 export function Sidebar({ onCollapse }: { onCollapse?: () => void } = {}) {
@@ -36,6 +52,7 @@ export function Sidebar({ onCollapse }: { onCollapse?: () => void } = {}) {
   const {
     csvOriginal,
     rapportAudit,
+    planValide,
     currentStem,
     currentName,
     applyProjectSnapshot,
@@ -56,6 +73,10 @@ export function Sidebar({ onCollapse }: { onCollapse?: () => void } = {}) {
   const [feedback, setFeedback] = useState<
     { kind: "ok" | "err"; msg: string } | null
   >(null);
+  // Occupation estimée du localStorage (D9) — recalculée après chaque mutation
+  // de la liste des projets ; déclenche une alerte quota au-delà du seuil.
+  const [storageRatio, setStorageRatio] = useState(0);
+  const importInputRef = useRef<HTMLInputElement>(null);
 
   // Hydration : remplir l'index des projets après le mount pour éviter le
   // mismatch SSR/client (localStorage n'existe pas côté serveur).
@@ -97,6 +118,7 @@ export function Sidebar({ onCollapse }: { onCollapse?: () => void } = {}) {
   const buildSnapshot = (): ProjectSnapshot => ({
     csvFilename: state.csvFilename,
     csvOriginal: state.csvOriginal,
+    sourceRoot: state.sourceRoot,
     archivisteObservation: state.archivisteObservation,
     step: state.step,
     rapportAudit: state.rapportAudit,
@@ -105,17 +127,38 @@ export function Sidebar({ onCollapse }: { onCollapse?: () => void } = {}) {
     planValideOriginal: state.planValideOriginal,
     planNotes: state.planNotes,
     planModifie: state.planModifie,
+    planOrigin: state.planOrigin,
+    classementDirectives: state.classementDirectives,
     briefMode: state.briefMode,
+    referencePlan: state.referencePlan,
+    referencePlanName: state.referencePlanName,
+    referenceMode: state.referenceMode,
     thinkingClassement: state.thinkingClassement,
     llmRawResponse: state.llmRawResponse,
     llmRawRows: state.llmRawRows,
     classementBatches: state.classementBatches,
-    classementDirectives: state.classementDirectives,
     csvFinal: state.csvFinal,
     lastError: state.lastError,
+    usageAudit: state.usageAudit,
+    usageClassementTotal: state.usageClassementTotal,
+    durationAudit: state.durationAudit,
+    durationClassementTotal: state.durationClassementTotal,
+    promptVersionAudit: state.promptVersionAudit,
+    promptVersionClassement: state.promptVersionClassement,
+    modelAudit: state.modelAudit,
+    modelClassement: state.modelClassement,
   });
 
-  const refreshProjects = () => setProjects(listProjects());
+  const refreshProjects = () => {
+    setProjects(listProjects());
+    setStorageRatio(estimateStorageUsage().ratio);
+  };
+
+  // Occupation initiale (après hydratation de l'index).
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setStorageRatio(estimateStorageUsage().ratio);
+  }, [projects.length]);
 
   const doNewProject = () => {
     reset(); // efface aussi l'identité (currentStem/currentName) dans le store
@@ -138,11 +181,17 @@ export function Sidebar({ onCollapse }: { onCollapse?: () => void } = {}) {
   // Plus de sauvegarde manuelle : le projet est matérialisé au premier résultat
   // IA, puis chaque modification est persistée automatiquement (debounce).
 
-  // Création différée : on attend le premier résultat (rapport d'audit IA ou plan
-  // adopté directement par l'archiviste) pour créer le projet — évite de stocker
-  // les uploads abandonnés. Le nom par défaut est dérivé du fichier CSV.
+  // Création différée : on attend un premier acquis pour créer le projet —
+  // évite de stocker les uploads abandonnés. Le nom par défaut est dérivé du
+  // fichier CSV (renommable ensuite via le crayon).
+  //
+  // Cet acquis est le rapport d'audit **ou** un plan validé : un plan adopté
+  // sans audit LLM est un travail à part entière, et il ouvre droit au
+  // classement. Ne déclencher que sur le rapport laissait ces projets sans
+  // `currentStem`, donc jamais sauvegardés — le classement qui suivait, lots
+  // compris, était perdu à la fermeture de l'onglet.
   useEffect(() => {
-    if (currentStem || (!rapportAudit && !state.planValide)) return;
+    if (currentStem || !(rapportAudit || planValide)) return;
     try {
       const base = state.csvFilename
         .replace(/\.csv$/i, "")
@@ -164,7 +213,7 @@ export function Sidebar({ onCollapse }: { onCollapse?: () => void } = {}) {
       setFeedback({ kind: "err", msg: e instanceof Error ? e.message : String(e) });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rapportAudit, state.planValide, currentStem]);
+  }, [rapportAudit, planValide, currentStem]);
 
   // Mises à jour : dès qu'une donnée persistée change, on ré-enregistre. Debounce
   // 800 ms pour ne pas écrire à chaque frappe (textarea d'observation). Les
@@ -196,12 +245,21 @@ export function Sidebar({ onCollapse }: { onCollapse?: () => void } = {}) {
     state.planValideOriginal,
     state.planNotes,
     state.planModifie,
+    state.planOrigin,
     state.thinkingClassement,
     state.llmRawResponse,
     state.llmRawRows,
     state.classementBatches,
     state.csvFinal,
     state.lastError,
+    state.usageAudit,
+    state.usageClassementTotal,
+    state.durationAudit,
+    state.durationClassementTotal,
+    state.promptVersionAudit,
+    state.promptVersionClassement,
+    state.modelAudit,
+    state.modelClassement,
   ]);
 
   const handleLoad = (stem: string) => {
@@ -222,7 +280,11 @@ export function Sidebar({ onCollapse }: { onCollapse?: () => void } = {}) {
     if (!pendingStem) return;
     try {
       if (pendingStem === currentStem) {
-        setCurrentProject("", "");
+        // Projet ouvert : on efface données **et** identité (reset), pas seulement
+        // l'identité. Sinon l'effet de création différée verrait un rapport sans
+        // stem et re-matérialiserait aussitôt le projet sous un nouveau stem
+        // (la suppression semblerait sans effet). Un projet vierge s'ouvre.
+        reset();
         const params = new URLSearchParams(searchParams.toString());
         params.delete("p");
         router.replace(params.toString() ? `/?${params.toString()}` : "/");
@@ -240,6 +302,32 @@ export function Sidebar({ onCollapse }: { onCollapse?: () => void } = {}) {
     try {
       duplicateProject(stem);
       refreshProjects();
+    } catch (e) {
+      setFeedback({ kind: "err", msg: e instanceof Error ? e.message : String(e) });
+    }
+  };
+
+  const handleExport = (stem: string) => {
+    try {
+      const { filename, json } = exportProjectJson(stem);
+      const blob = new Blob([json], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setFeedback({ kind: "err", msg: e instanceof Error ? e.message : String(e) });
+    }
+  };
+
+  const handleImportFile = async (file: File) => {
+    try {
+      const { stem, name } = importProjectJson(await file.text());
+      refreshProjects();
+      setFeedback({ kind: "ok", msg: `Projet « ${name} » importé.` });
+      handleLoad(stem);
     } catch (e) {
       setFeedback({ kind: "err", msg: e instanceof Error ? e.message : String(e) });
     }
@@ -326,16 +414,56 @@ export function Sidebar({ onCollapse }: { onCollapse?: () => void } = {}) {
         )}
       </div>
 
-      <Button
-        className="mt-3 w-full"
-        type="button"
-        variant="outline"
-        size="sm"
-        onClick={handleNewProject}
-      >
-        <Plus className="mr-1 h-3.5 w-3.5" />
-        Nouveau projet
-      </Button>
+      <div className="mt-3 flex gap-2">
+        <Button
+          className="flex-1"
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={handleNewProject}
+        >
+          <Plus className="mr-1 h-3.5 w-3.5" />
+          Nouveau projet
+        </Button>
+        {/* Import d'un projet .json exporté (D9) — portabilité entre postes. */}
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => importInputRef.current?.click()}
+          aria-label="Importer un projet"
+          title="Importer un projet (.json)"
+        >
+          <Upload className="h-3.5 w-3.5" />
+        </Button>
+        <input
+          ref={importInputRef}
+          type="file"
+          accept="application/json,.json"
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) handleImportFile(file);
+            e.target.value = ""; // permet de réimporter le même fichier
+          }}
+        />
+      </div>
+
+      {/* Alerte quota localStorage (D9) : la persistance est entièrement
+          côté client ; on prévient avant la saturation pour éviter les pertes
+          d'auto-save. Exporter puis supprimer d'anciens projets libère la place. */}
+      {storageRatio >= LOCALSTORAGE_WARN_RATIO && (
+        <Alert variant="warning" className="mt-3">
+          <AlertTriangle className="h-4 w-4" />
+          <AlertDescription className="text-xs">
+            Stockage local presque plein (
+            {Math.round(storageRatio * 100)} % de ~
+            {Math.round(LOCALSTORAGE_BUDGET_BYTES / (1024 * 1024))} Mo).
+            Exportez puis supprimez d&apos;anciens projets pour éviter une perte
+            d&apos;enregistrement.
+          </AlertDescription>
+        </Alert>
+      )}
 
       {/* ── Liste des projets (façon conversations) ──────────────────── */}
       <div className="mt-4 min-h-0 flex-1 overflow-y-auto">
@@ -395,38 +523,44 @@ export function Sidebar({ onCollapse }: { onCollapse?: () => void } = {}) {
                       >
                         {p.name}
                       </button>
-                      <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100">
-                        <Button
-                          variant="ghost"
-                          size="icon-sm"
-                          onClick={() => startRename(p.stem, p.name)}
-                          aria-label="Renommer ce projet"
-                          title="Renommer"
-                        >
-                          <Pencil className="h-3.5 w-3.5" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon-sm"
-                          onClick={() => handleDuplicate(p.stem)}
-                          aria-label="Dupliquer ce projet"
-                          title="Dupliquer"
-                        >
-                          <Copy className="h-3.5 w-3.5" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon-sm"
-                          onClick={() => {
-                            setPendingStem(p.stem);
-                            setConfirmDelete(true);
-                          }}
-                          aria-label="Supprimer ce projet"
-                          title="Supprimer"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </Button>
-                      </div>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="icon-sm"
+                            aria-label="Actions du projet"
+                            title="Actions"
+                            className="shrink-0 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100 data-[state=open]:opacity-100"
+                          >
+                            <MoreHorizontal className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="start">
+                          <DropdownMenuItem onSelect={() => startRename(p.stem, p.name)}>
+                            <Pencil className="h-4 w-4" />
+                            Renommer
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onSelect={() => handleDuplicate(p.stem)}>
+                            <Copy className="h-4 w-4" />
+                            Dupliquer
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onSelect={() => handleExport(p.stem)}>
+                            <Download className="h-4 w-4" />
+                            Exporter (.json)
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem
+                            className="text-destructive focus:bg-destructive/10 focus:text-destructive"
+                            onSelect={() => {
+                              setPendingStem(p.stem);
+                              setConfirmDelete(true);
+                            }}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                            Supprimer
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     </div>
                   )}
                 </li>
@@ -484,14 +618,26 @@ function snapshotFromStored(stored: {
   planValideOriginal: string;
   planNotes: string;
   planModifie: boolean;
+  planOrigin?: import("@/lib/store").PlanOrigin;
+  classementDirectives?: import("@/lib/csv/types").ClassementDirective[];
   briefMode?: boolean;
+  referencePlan?: string;
+  referencePlanName?: string;
+  referenceMode?: string;
   thinkingClassement: string;
   llmRawResponse: string;
   llmRawRows: import("@/lib/csv/types").LlmClassementRow[] | null;
   classementBatches?: import("@/lib/csv/types").ClassementBatch[] | null;
-  classementDirectives?: import("@/lib/csv/types").ClassementDirective[];
   csvFinal: import("@/lib/csv/types").ResipResult | null;
   lastError: string;
+  usageAudit?: import("@/lib/llm/client-stream").LlmUsage | null;
+  usageClassementTotal?: import("@/lib/llm/client-stream").LlmUsage | null;
+  durationAudit?: number | null;
+  durationClassementTotal?: number | null;
+  promptVersionAudit?: string | null;
+  promptVersionClassement?: string | null;
+  modelAudit?: string | null;
+  modelClassement?: string | null;
 }): ProjectSnapshot {
   return {
     csvFilename: stored.csvFilename,
@@ -504,13 +650,25 @@ function snapshotFromStored(stored: {
     planValideOriginal: stored.planValideOriginal,
     planNotes: stored.planNotes,
     planModifie: stored.planModifie,
+    planOrigin: stored.planOrigin,
+    classementDirectives: stored.classementDirectives ?? [],
     briefMode: stored.briefMode ?? false,
+    referencePlan: stored.referencePlan ?? "",
+    referencePlanName: stored.referencePlanName ?? "",
+    referenceMode: stored.referenceMode ?? "inspire",
     thinkingClassement: stored.thinkingClassement,
     llmRawResponse: stored.llmRawResponse,
     llmRawRows: stored.llmRawRows,
     classementBatches: stored.classementBatches ?? null,
-    classementDirectives: stored.classementDirectives ?? [],
     csvFinal: stored.csvFinal,
     lastError: stored.lastError,
+    usageAudit: stored.usageAudit ?? null,
+    usageClassementTotal: stored.usageClassementTotal ?? null,
+    durationAudit: stored.durationAudit ?? null,
+    durationClassementTotal: stored.durationClassementTotal ?? null,
+    promptVersionAudit: stored.promptVersionAudit ?? null,
+    promptVersionClassement: stored.promptVersionClassement ?? null,
+    modelAudit: stored.modelAudit ?? null,
+    modelClassement: stored.modelClassement ?? null,
   };
 }

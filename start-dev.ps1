@@ -1,3 +1,12 @@
+﻿# ⚠️ ENCODAGE : ce fichier doit rester en UTF-8 **avec BOM**. Sans BOM, Windows
+# PowerShell 5.1 (le `powershell` livré avec Windows 10/11) le lit en CP1252 :
+# les tirets cadratins « — » des messages deviennent « â€” », dont l'octet 0x94
+# vaut le guillemet fermant « ” » — que PowerShell accepte comme délimiteur de
+# chaîne. La chaîne se referme au milieu de la ligne et l'analyse du script
+# échoue avant toute exécution. PowerShell 7 n'est pas affecté (UTF-8 par
+# défaut), d'où un problème facile à manquer. Beaucoup d'éditeurs enregistrent
+# sans BOM par défaut : vérifier après chaque modification.
+#
 # Lance ODACEA en développement : backend Python (FastAPI) + front Next, ensemble.
 #
 #   Backend  : http://127.0.0.1:8000   (backend/, uvicorn --reload)

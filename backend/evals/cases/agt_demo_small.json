@@ -1,0 +1,100 @@
+{
+  "_comment": [
+    "Corpus golden — agent vrac AGT-001 sur le jeu demo_data SMALL",
+    "(export RESIP Mairie_Saint-Genis_Affaires_Scolaires_SMALL-resip_*.csv).",
+    "Chaque cas : une requête d'archiviste en langage naturel → la requête",
+    "attendue (outil + filtre). L'agent est lecture seule (exploration/",
+    "recherche uniquement) : pas de cas de classement. Les totaux ne sont",
+    "JAMAIS écrits en dur : l'éval recalcule le filtre golden sur le CSV évalué",
+    "(équivalence sémantique — cf. core/evals.py::agent_case_metrics et",
+    "evals/README.md). Usage :",
+    "  python cli.py eval --agent agt --input <csv_demo_small> \\",
+    "    --cases evals/cases/vrac_demo_small.json --model <m> [--tool-mode json]"
+  ],
+  "cases": [
+    {
+      "id": "compter_pdf",
+      "question": "Combien de fichiers PDF contient ce vrac ?",
+      "attendu": {
+        "type": "requete",
+        "outils": ["compter"],
+        "filtre": {"extension": "pdf"},
+        "verifierTotal": true
+      }
+    },
+    {
+      "id": "compter_dossier_restauration",
+      "question": "Combien de fichiers dans le dossier RESTAURATION, sous-dossiers compris ?",
+      "attendu": {
+        "type": "requete",
+        "outils": ["compter"],
+        "filtre": {"dossier": "RESTAURATION"},
+        "verifierTotal": true
+      }
+    },
+    {
+      "id": "compter_courriels",
+      "question": "Combien de courriels (.msg) traînent dans ce vrac ?",
+      "attendu": {
+        "type": "requete",
+        "outils": ["compter"],
+        "filtre": {"extension": "msg"},
+        "verifierTotal": true
+      }
+    },
+    {
+      "id": "anciens_2019",
+      "question": "Combien de fichiers datent de 2019 ou avant ?",
+      "attendu": {
+        "type": "requete",
+        "outils": ["compter"],
+        "filtre": {"annee_max": 2019},
+        "verifierTotal": true
+      }
+    },
+    {
+      "id": "contenu_a_classer",
+      "question": "Que contient le dossier A CLASSER ?",
+      "attendu": {
+        "type": "requete",
+        "outils": ["lister_dossier", "echantillonner"],
+        "filtre": {"dossier": "A CLASSER"}
+      }
+    },
+    {
+      "id": "mots_cles_vrac",
+      "question": "Quels sont les principaux mots-clés de ce vrac ?",
+      "attendu": {
+        "type": "requete",
+        "outils": ["mots_frequents"],
+        "filtre": {}
+      }
+    },
+    {
+      "id": "themes_restauration",
+      "question": "Quelles sont les grandes thématiques des fichiers du dossier RESTAURATION ?",
+      "attendu": {
+        "type": "requete",
+        "outils": ["mots_frequents"],
+        "filtre": {"dossier": "RESTAURATION"}
+      }
+    },
+    {
+      "id": "repartition_annees",
+      "question": "Quelle est la répartition des fichiers par année ?",
+      "attendu": {
+        "type": "requete",
+        "outils": ["stats"]
+      }
+    },
+    {
+      "id": "echantillon_photos_kermesse",
+      "question": "Montre-moi quelques fichiers du dossier « Photos kermesse fete ecole ».",
+      "attendu": {
+        "type": "requete",
+        "outils": ["echantillonner", "lister_dossier"],
+        "filtre": {"dossier": "Photos kermesse fete ecole"}
+      }
+    }
+  ]
+}

@@ -19,7 +19,7 @@ même taille et même date — est sauté) et **tolérante** (une erreur par fic
 n'interrompt pas le run). Garde-fous du répertoire cible dans
 `check_target_guards`.
 
-Le plan d'opérations est dérivé du **manifeste de structure** (`core.export_manifest` —
+Le plan d'opérations est dérivé du **manifeste** (`core.export_manifest` —
 source unique de la localisation cible de chaque item) : aucune re-dérivation de
 l'arborescence ici.
 """
@@ -304,7 +304,7 @@ def apply_plan(plan: ApplyPlan, source_root: Path, target_root: Path) -> dict:
 def verify_apply(plan: ApplyPlan, target_root: Path) -> dict:
     """Vérification post-copie : compte les fichiers attendus effectivement
     présents dans la cible, à la bonne taille — **métadonnées seules** (aucune
-    lecture de contenu ; l'empreinte SHA-256 optionnelle ne relève pas de cette étape, non
+    lecture de contenu ; l'empreinte SHA-256 optionnelle relève de `enrich --fingerprint`, non
     incluse ici). Retourne ``{expected, present, missingTargets}``."""
     target_root = target_root.expanduser()
     present = 0

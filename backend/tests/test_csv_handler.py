@@ -13,6 +13,8 @@ from core.csv_handler import (
     _ancestors_inclusive,
     convert_classement_to_resip,
     normalize_resip_export,
+    parse_plan_tree,
+    strip_folder_numbers,
     validate_csv,
     validate_output_csv,
 )
@@ -271,6 +273,118 @@ def test_plan_not_parsed_is_not_a_match():
     assert stats["planMatches"] is False
 
 
+# ── Option d'export : retrait des numéros de position (strip_folder_numbers) ─────
+
+def test_strip_folder_numbers_rewrites_only_recordgrp_file():
+    """Retire le préfixe des noms de dossier (File des RecordGrp) sans toucher ni
+    la racine, ni le chemin source des Items, ni les titres descriptifs."""
+    df_original = _make_original([
+        ("doc1.docx", "Courrier", "2020-01-01", "2020-06-01"),
+        ("doc2.pdf", "Facture", "2019-01-01", "2019-12-31"),
+    ])
+    df_llm = _make_llm([
+        ("doc1.docx", "1-1_Courriers", "Courrier.docx"),
+        ("doc2.pdf", "1-2_Factures", "Facture.pdf"),
+    ])
+    df_resip, _, _ = convert_classement_to_resip(df_llm, df_original, PLAN_VALIDE)
+    stripped, renamed = strip_folder_numbers(df_resip)
+
+    assert renamed == []
+    files = {
+        r["File"] for _, r in stripped.iterrows()
+        if r["Content.DescriptionLevel"] == "RecordGrp"
+    }
+    # Numéros retirés partout, y compris les dossiers intermédiaires.
+    assert files == {".", "Administratif", "Courriers", "Factures"}
+    # Chemins source des Items (clé de jointure/copie) intacts.
+    item_files = {
+        r["File"] for _, r in stripped.iterrows()
+        if r["Content.DescriptionLevel"] == "Item"
+    }
+    assert item_files == {"doc1.docx", "doc2.pdf"}
+    # Structure préservée : ParentID inchangés (mêmes IDs qu'avant).
+    assert list(stripped["ParentID"]) == list(df_resip["ParentID"])
+    # L'original n'est pas muté.
+    assert "1-1_Courriers" in set(df_resip["File"])
+
+
+def test_strip_folder_numbers_dedup_sibling_collision():
+    """Deux frères qui deviennent homonymes après retrait sont dédoublonnés et
+    signalés — la copie physique reste matérialisable."""
+    plan = """
+## Arborescence technique
+
+```text
+1_Racine/
+├── 1-1_Rapports/
+└── 1-2_Rapports/
+```
+"""
+    df_original = _make_original([
+        ("a.txt", "A", "2020-01-01", "2020-01-02"),
+        ("b.txt", "B", "2021-01-01", "2021-01-02"),
+    ])
+    df_llm = _make_llm([
+        ("a.txt", "1-1_Rapports", "A.txt"),
+        ("b.txt", "1-2_Rapports", "B.txt"),
+    ])
+    df_resip, _, _ = convert_classement_to_resip(df_llm, df_original, plan)
+    stripped, renamed = strip_folder_numbers(df_resip)
+
+    rg_files = [
+        r["File"] for _, r in stripped.iterrows()
+        if r["Content.DescriptionLevel"] == "RecordGrp" and r["File"] != "."
+    ]
+    assert sorted(rg_files) == ["Racine", "Rapports", "Rapports_2"]
+    assert len(renamed) == 1 and "Rapports_2" in renamed[0]
+
+
+def test_strip_folder_numbers_noop_without_prefix():
+    """Un nom déjà sans numéro est laissé tel quel (idempotent)."""
+    df_original = _make_original([("a.txt", "A", "2020-01-01", "2020-01-02")])
+    df_llm = _make_llm([("a.txt", "1-1_Courriers", "A.txt")])
+    df_resip, _, _ = convert_classement_to_resip(df_llm, df_original, PLAN_VALIDE)
+    once, _ = strip_folder_numbers(df_resip)
+    twice, renamed = strip_folder_numbers(once)
+    assert renamed == []
+    assert list(once["File"]) == list(twice["File"])
+
+
+# ── Parsing du plan (tolérance à l'absence d'en-tête) ───────────────────────────
+
+def test_parse_plan_tree_with_header():
+    tree = parse_plan_tree(PLAN_VALIDE)
+    assert tree == {
+        "1_Administratif": None,
+        "1-1_Courriers": "1_Administratif",
+        "1-2_Factures": "1_Administratif",
+        "2_Technique": None,
+    }
+
+
+def test_parse_plan_tree_without_header():
+    """Repli : un arbre produit sans le titre « Arborescence technique » (petit
+    modèle ou plan collé à la main) reste parsé — pas d'édition manuelle forcée."""
+    plan = """Mairie — Affaires scolaires → MAIRIE_AFFAIRES/
+├── 1. Inscriptions → 1_Inscriptions/
+│   └── Inscriptions 2023 → 1-1_Inscriptions_2023/
+└── 2. Périscolaire → 2_Periscolaire/
+"""
+    tree = parse_plan_tree(plan)
+    assert tree == {
+        "MAIRIE_AFFAIRES": None,
+        "1_Inscriptions": "MAIRIE_AFFAIRES",
+        "1-1_Inscriptions_2023": "1_Inscriptions",
+        "2_Periscolaire": "MAIRIE_AFFAIRES",
+    }
+
+
+def test_parse_plan_tree_empty_on_prose_only():
+    """Sans en-tête ET sans ligne de dossier (texte de prose) → dict vide :
+    le repli n'invente rien, planParsed reste False en aval."""
+    assert parse_plan_tree("## Préconisations\nRien à signaler.") == {}
+
+
 # ── Helper d'ascendance (parcours + garde anti-cycle) ───────────────────────────
 
 def test_ancestors_inclusive_chain():
@@ -310,6 +424,21 @@ def test_normalize_resip_native_export():
     assert out.loc[0, "File"] == "."          # racine sans parent marquée "."
     assert out.loc[1, "File"] == "dossier/fichier.docx"
     assert "ObjectFiles" not in out.columns
+
+
+def test_normalize_resip_windows_path_separators():
+    """RESIP sous Windows exporte les chemins avec « \\ » : normalisés en « / »
+    (forme canonique Archifiltre — profondeur du digest, stats par dossier et
+    outils vrac supposent « / »). No-op sur un CSV déjà canonique."""
+    df = pd.DataFrame({
+        "ID": ["1", "2", "3"],
+        "ParentID": ["", "1", "1"],
+        "File": [".", "RESTAURATION\\Factures\\facture 2022.xlsx", "deja/canonique.pdf"],
+        "Content.DescriptionLevel": ["RecordGrp", "Item", "Item"],
+    })
+    out = normalize_resip_export(df)
+    assert out.loc[1, "File"] == "RESTAURATION/Factures/facture 2022.xlsx"
+    assert out.loc[2, "File"] == "deja/canonique.pdf"
 
 
 def test_validate_csv_detects_problems():

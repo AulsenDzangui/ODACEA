@@ -3,10 +3,17 @@ fastapi>=0.110.0
 uvicorn[standard]>=0.29.0
 
 # LLM (interface unifiée — Anthropic, OpenAI, Google, Ollama, LM Studio, JAN)
-litellm>=1.40.0
+# Borne haute : à partir de la 1.84, litellm embarque une extension Rust et ne
+# publie plus de roue universelle `py3-none-any`. Sur un interpréteur sans roue
+# précompilée (Python 3.14 sous Windows, par exemple), pip retombe sur l'archive
+# source et tente une compilation qui échoue faute de Rust — et comme pip résout
+# tout le graphe avant d'installer, AUCUNE dépendance n'est installée.
+litellm>=1.40.0,<1.84
 
 # Données
-pandas>=2.2.0
+# Borne haute : pandas 3 change des comportements par défaut (types de chaînes,
+# copy-on-write). À lever après validation explicite de la suite sur pandas 3.
+pandas>=2.2.0,<3
 
 # Enrichissement mécanique des descriptions (étape `enrich`, lecture locale des
 # binaires bureautiques — aucun appel réseau, pas d'OCR)

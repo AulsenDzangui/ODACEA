@@ -1,8 +1,8 @@
 # ODACEA
 
-**Outil Documentaire d'Audit et de Classement d'Archives Électroniques**
+**Outil Documentaire d'Audit, de Classement et d'Évaluation d'Archives**
 
-ODACEA assiste les archivistes dans l'analyse et la réorganisation de vracs ou arborescences bureautiques. Il prend en entrée un CSV exporté par [Archifiltre](https://www.programmevitam.fr/pages/ressources/logiciel_archifiltre/) ou un export natif [RESIP](https://www.programmevitam.fr/pages/ressources/resip/) (converti automatiquement), et produit en sortie un CSV réorganisé, prêt à être réutilisé pour un export SIP SEDA ou une réorganisation d'arborescence dans RESIP.
+ODACEA assiste les archivistes pour analyser et réorganiser des vracs ou arborescences bureautiques. Il prend en entrée un CSV exporté par [Archifiltre Docs](https://www.programmevitam.fr/pages/ressources/logiciel_archifiltre/) ou un export natif [RESIP](https://www.programmevitam.fr/pages/ressources/resip/) (converti automatiquement), et produit en sortie un CSV réorganisé, prêt à être réutilisé pour un export SIP SEDA ou une réorganisation d'arborescence dans RESIP.
 
 L'IA ne voit que les **métadonnées** (chemins, noms de fichiers, dates), jamais le contenu des documents. L'outil est conçu pour fonctionner avec des **modèles locaux** (Ollama, LM Studio, JAN), de sorte qu'aucune donnée ne quitte l'infrastructure de l'institution.
 
@@ -56,29 +56,41 @@ Le moteur est aussi exposé en ligne de commande, pour l'intégration dans des c
 
 ```bash
 cd backend
-python cli.py enrich --input fichier.csv --source-root <dossier>   # préparation facultative (local, sans IA)
-python cli.py run --input fichier.csv                              # audit + classement enchaînés
+python cli.py enrich fichier.csv --source-root <dossier>          # préparation facultative (local, sans IA)
+python cli.py run fichier.csv                                     # audit + classement enchaînés
 python cli.py {enrich,audit,classement,run} --help
 ```
 
 ## Volumétrie recommandée
 
-ODACEA envoie les métadonnées du vrac au modèle en une fois (à l'audit) puis par lots (au classement). Pour un traitement fiable, visez **800 à 1000 items par passe**, ce qui tient confortablement dans une fenêtre de contexte de **128K tokens**. Au-delà, découpez le versement en plusieurs lots, ou activez les options de réduction de contexte (échantillonnage des fichiers, filtrage des colonnes) ; voir le [guide utilisateur](docs/GUIDE_UTILISATEUR.md). La volumétrie utile dépend aussi du modèle : un 14B local sature plus vite qu'un grand modèle cloud.
+ODACEA envoie les métadonnées du vrac au modèle en une fois (à l'audit) puis par lots (au classement). Pour un traitement fiable, visez **800 à 1000 items par passe**, ce qui tient confortablement dans une fenêtre de contexte de **128K tokens**. Au-delà, découpez le versement en plusieurs lots, ou activez les options de réduction de contexte (échantillonnage des fichiers, filtrage des colonnes) ; voir le [guide utilisateur](docs/GUIDE_UTILISATEUR.md). La volumétrie utile dépend aussi du modèle : un modèle local compact sature plus vite qu'un grand modèle cloud.
 
 ## Jeu de données de démonstration
 
 Le dossier [`demo/`](demo/) contient trois générateurs d'arborescence bureautique fictive (petit, moyen, grand) calibrés selon la taille du modèle LLM utilisé. Les arborescences générées simulent un service municipal d'Affaires scolaires et reproduisent les patterns de désordre typiques d'un vrac réel (doublons, versions cumulées, naming incohérent, etc.).
 
 ```bash
-python demo/generate_demo_tree_small.py    # → demo_data/…_SMALL/  (82 fichiers, modèle 14B)
-python demo/generate_demo_tree.py          # → demo_data/…/         (184 fichiers, modèle 13-30B)
-python demo/generate_demo_tree_large.py    # → demo_data/…_LARGE/   (604 fichiers, modèles cloud)
+python demo/generate_demo_tree_small.py    # → demo_data/…_SMALL/  (82 fichiers, petit jeu)
+python demo/generate_demo_tree.py          # → demo_data/…/         (184 fichiers, jeu moyen)
+python demo/generate_demo_tree_large.py    # → demo_data/…_LARGE/   (604 fichiers, grand jeu)
 ```
 
 Le dossier `demo_data/` est gitignoré : chaque utilisateur le régénère localement. Voir [`demo/README.md`](demo/README.md) pour le workflow complet de démo.
 
+## Installation institutionnelle (Docker)
+
+Pour un déploiement on-prem sans `npm`/`pip` (mode d'installation de référence pour une archive départementale), un **Docker Compose** lance le backend et le front buildé en une commande :
+
+```bash
+cp .env.compose.example .env        # facultatif : modèle, port, etc.
+docker compose up -d --build        # → http://localhost:9000
+```
+
+Pas-à-pas complet (installation d'Ollama/LM Studio, choix d'un modèle 13–30B, configuration réseau interne) : [`docs/INSTALLATION_ONPREM.md`](docs/INSTALLATION_ONPREM.md).
+
 ## Documentation
 
+- [`docs/INSTALLATION_ONPREM.md`](docs/INSTALLATION_ONPREM.md) : installation on-prem par Docker Compose (modèle local, réseau interne)
 - [`docs/GUIDE_UTILISATEUR.md`](docs/GUIDE_UTILISATEUR.md) : guide utilisateur (interface web + CLI)
 
 ## Origine

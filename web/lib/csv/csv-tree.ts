@@ -49,6 +49,36 @@ export function buildCsvTree(rows: SedaRow[]): CsvTreeNode[] {
   return roots;
 }
 
+/** Résultat de recherche dans un arbre : nœuds correspondants et nœuds
+ *  dont le sous-arbre contient au moins une correspondance (= trajet à
+ *  surligner : la chaîne d'ancêtres d'un fichier trouvé). */
+export type CsvTreeMatch = {
+  matched: Set<string>;
+  withMatch: Set<string>;
+};
+
+export function searchCsvTree(nodes: CsvTreeNode[], query: string): CsvTreeMatch {
+  const matched = new Set<string>();
+  const withMatch = new Set<string>();
+  const q = query.trim().toLowerCase();
+  if (!q) return { matched, withMatch };
+
+  const visit = (node: CsvTreeNode): boolean => {
+    const isMatch =
+      node.title.toLowerCase().includes(q) ||
+      node.file.toLowerCase().includes(q);
+    if (isMatch) matched.add(node.id);
+    let subtree = isMatch;
+    for (const child of node.children) {
+      if (visit(child)) subtree = true;
+    }
+    if (subtree) withMatch.add(node.id);
+    return subtree;
+  };
+  for (const node of nodes) visit(node);
+  return { matched, withMatch };
+}
+
 export function csvTreeStats(rows: SedaRow[]): { folders: number; items: number } {
   let folders = 0;
   let items = 0;

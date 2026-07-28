@@ -18,8 +18,17 @@ ENV/
 # Environment variables
 .env
 
+# Configuration locale — propre à l'archiviste (modèle, base_url, options).
+# Le modèle versionné est odacea.toml.example.
+odacea.toml
+
 # Data / uploads (CSV utilisateurs)
 *.csv
+# Exception : le jeu de démonstration embarqué doit être versionné (déploiement).
+!demo_assets/demo.csv
+# Exception : les fixtures de test figées doivent être versionnées —
+# sans elles, la suite pytest échoue sur un clone neuf et en CI.
+!tests/fixtures/*.csv
 
 # OS
 .DS_Store
@@ -32,5 +41,13 @@ Thumbs.db
 saves/
 logs/
 
+# Données de démo générées par scripts/generate_demo_tree*.py
+demo_data/
+
 # Résultats de tests CLI
 test_cli_out/
+
+# Rapports d'évaluation des prompts (cli.py eval) — historisés en local,
+# potentiellement dérivés de vracs réels : on ne committe que des résumés
+# (PR / journal), jamais les JSON bruts.
+evals/results/

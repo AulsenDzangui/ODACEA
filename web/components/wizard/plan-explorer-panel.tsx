@@ -4,12 +4,14 @@ import { useState } from "react";
 import {
   planMaterialize,
   planFromFolder,
+  formatApiError,
   type PlanFromFolder,
 } from "@/lib/llm/client-stream";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { InfoTip } from "@/components/ui/info-tip";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import {
@@ -22,20 +24,20 @@ import {
 } from "lucide-react";
 
 /**
- * Édition du plan dans l'explorateur de fichiers — aller-retour par des dossiers
+ * Édition du plan par l'Explorateur Windows — aller-retour dossiers
  * réels. **Backend local uniquement** (masqué en démonstration par le parent) :
  *
  * 1. « Matérialiser » écrit l'arborescence du plan courant en **dossiers vides
  *    réels** dans un répertoire de travail choisi (`POST /plan/materialize`).
- * 2. L'archiviste réorganise ces dossiers avec ses gestes habituels (déplacer,
- *    renommer, créer, supprimer).
+ * 2. L'archiviste réorganise ces dossiers dans l'Explorateur (déplacer, renommer,
+ *    créer, supprimer) avec ses gestes habituels.
  * 3. « Recharger depuis le dossier » re-scanne le répertoire et reconstruit le plan
  *    canonique (`POST /plan/from-folder`) avec un **aperçu des changements** ; une
  *    fois vérifié, « Adopter » remplace le plan validé.
  *
- * Transport pur : matérialisation, scan, reconstruction et comparaison vivent dans
- * le moteur Python (`core/plan_folders.py`). Le front n'envoie qu'un chemin + le
- * texte du plan et présente le résultat.
+ * Transport pur : matérialisation, scan, reconstruction et diff vivent dans le
+ * moteur Python (`core/plan_folders.py`). Le front n'envoie qu'un chemin + le texte
+ * du plan et présente le résultat.
  */
 export function PlanExplorerPanel({
   planValide,
@@ -66,7 +68,7 @@ export function PlanExplorerPanel({
       const res = await planMaterialize(planValide, dir, { clear, confirm });
       setMaterialized({ folderCount: res.folderCount, cleared: res.cleared });
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(formatApiError(err));
     } finally {
       setBusy(null);
     }
@@ -85,7 +87,7 @@ export function PlanExplorerPanel({
     try {
       setScan(await planFromFolder(dir, planValide));
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(formatApiError(err));
     } finally {
       setBusy(null);
     }
@@ -112,7 +114,7 @@ export function PlanExplorerPanel({
         <FolderTree className="mt-0.5 h-4 w-4 shrink-0 text-(--ink-500)" />
         <div className="space-y-1">
           <p className="text-sm font-medium">
-            Éditer le plan dans l&apos;explorateur de fichiers
+            Éditer le plan dans l&apos;Explorateur Windows
           </p>
           <p className="text-xs text-(--ink-500)">
             Matérialisez le plan en dossiers vides réels, réorganisez-les avec vos
@@ -124,8 +126,12 @@ export function PlanExplorerPanel({
       </div>
 
       <div className="space-y-1.5">
-        <Label htmlFor="plan-workdir" className="text-sm">
+        <Label htmlFor="plan-workdir" className="flex items-center gap-1.5 text-sm">
           Répertoire de travail (sur votre machine)
+          <InfoTip label="À propos du répertoire de travail">
+            Un dossier local vide de préférence. Les préfixes numériques (1_, 1-1_…)
+            font que le tri de l&apos;Explorateur restitue l&apos;ordre du plan.
+          </InfoTip>
         </Label>
         <Input
           id="plan-workdir"
@@ -134,23 +140,17 @@ export function PlanExplorerPanel({
           placeholder="Ex : D:\\travail\\plan_odacea"
           disabled={busy !== null}
         />
-        <p className="text-xs text-(--ink-500)">
-          Un dossier local, vide de préférence. Les préfixes numériques (1_,
-          1-1_…) font que le tri de l&apos;explorateur restitue l&apos;ordre du
-          plan.
-        </p>
       </div>
 
       <div className="flex items-center justify-between gap-4">
-        <div className="space-y-0.5">
-          <Label htmlFor="plan-clear" className="text-sm font-normal">
-            Vider le répertoire avant de matérialiser
-          </Label>
-          <p className="text-xs text-(--ink-500)">
-            Supprime le contenu de ce répertoire (uniquement lui) avant d&apos;y
-            écrire l&apos;arborescence. Confirmation demandée.
-          </p>
-        </div>
+        <Label htmlFor="plan-clear" className="flex items-center gap-1.5 text-sm font-normal">
+          Vider le répertoire avant de matérialiser
+          <InfoTip label="À propos du vidage">
+            Supprime le contenu du répertoire de travail (uniquement lui) avant
+            d&apos;y écrire l&apos;arborescence — pratique pour repartir propre.
+            Confirmation demandée.
+          </InfoTip>
+        </Label>
         <Switch
           id="plan-clear"
           checked={clear}
@@ -200,12 +200,12 @@ export function PlanExplorerPanel({
 
       {materialized && !scan && (
         <Alert variant="success">
-          <CheckCircle2 className="h-4 w-4" />
+          <CheckCircle2 />
           <AlertDescription className="text-xs">
             {materialized.folderCount} dossier(s) écrit(s)
             {materialized.cleared ? " (répertoire vidé au préalable)" : ""}.
-            Réorganisez-les dans l&apos;explorateur, puis «&nbsp;Recharger depuis
-            le dossier&nbsp;».
+            Réorganisez-les dans l&apos;Explorateur, puis « Recharger depuis le
+            dossier ».
           </AlertDescription>
         </Alert>
       )}
@@ -229,20 +229,24 @@ export function PlanExplorerPanel({
           ) : hasChanges ? (
             <ul className="space-y-0.5 text-xs">
               {changes!.renamed.map((c, i) => (
-                <li key={`r${i}`}>
+                <li key={`r${i}`} className="text-(--accent-700)">
                   Renommé : {c.from} → {c.to}
                 </li>
               ))}
               {changes!.moved.map((c, i) => (
-                <li key={`m${i}`}>
+                <li key={`m${i}`} className="text-(--accent-700)">
                   Déplacé : {c.from} → {c.to}
                 </li>
               ))}
               {changes!.added.map((c, i) => (
-                <li key={`a${i}`}>Ajouté : {c}</li>
+                <li key={`a${i}`} className="text-(--ink-700)">
+                  Ajouté : {c}
+                </li>
               ))}
               {changes!.removed.map((c, i) => (
-                <li key={`d${i}`}>Supprimé : {c}</li>
+                <li key={`d${i}`} className="text-(--danger-600)">
+                  Supprimé : {c}
+                </li>
               ))}
             </ul>
           ) : null}

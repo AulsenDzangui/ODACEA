@@ -1,7 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { planFromFolder, type PlanFromFolder } from "@/lib/llm/client-stream";
+import {
+  planFromFolder,
+  formatApiError,
+  type PlanFromFolder,
+} from "@/lib/llm/client-stream";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -9,11 +13,13 @@ import { FolderInput, Loader2, AlertTriangle } from "lucide-react";
 
 /**
  * Choix d'un plan directement depuis un **dossier existant** du poste :
- * l'archiviste indique un répertoire, on le scanne (`planFromFolder`) et on
- * remonte le plan reconstruit à l'appelant.
+ * l'archiviste indique un répertoire, on le re-scanne (`planFromFolder`) et on
+ * remonte le plan reconstruit à l'appelant. Partagé par l'adoption d'un plan
+ * et l'import d'un plan de référence — même geste dans les deux cas (cohérence).
  *
  * Transport pur : le scan et la reconstruction vivent dans le moteur
- * (`core/plan_folders.py`). Fonctionne uniquement lorsque le backend est local.
+ * (`core/plan_folders.py`). Fonction sur poste : le parent ne l'affiche pas en
+ * démonstration (le scan de dossiers y est indisponible).
  */
 export function PlanFolderPicker({
   placeholder = "Ex : D:\\archives\\mon_plan",
@@ -36,9 +42,9 @@ export function PlanFolderPicker({
     setBusy(true);
     setError(null);
     try {
-      onScanned(await planFromFolder(d), d);
+      onScanned(await planFromFolder(d, ""), d);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(formatApiError(err));
     } finally {
       setBusy(false);
     }

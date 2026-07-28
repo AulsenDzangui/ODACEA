@@ -69,7 +69,16 @@ def normalize_resip_export(df: pd.DataFrame) -> pd.DataFrame:
             no_parent = df["ParentID"].fillna("").str.strip() == ""
             df.loc[no_parent, "File"] = "."
 
-    # 4. IDs textuels (Import-N) → entiers séquentiels, ParentID réécrits en cohérence
+    # 4. Séparateur de chemin Windows : RESIP sous Windows exporte les chemins
+    #    physiques avec « \ » ; la forme canonique Archifiltre (et tout le
+    #    moteur : profondeur du digest, stats par dossier, outils vrac,
+    #    parse du plan) suppose « / ». No-op sur un CSV déjà canonique.
+    if "File" in df.columns:
+        df["File"] = df["File"].map(
+            lambda p: p.replace("\\", "/") if isinstance(p, str) else p
+        )
+
+    # 5. IDs textuels (Import-N) → entiers séquentiels, ParentID réécrits en cohérence
     if "ID" in df.columns:
         ids = df["ID"].fillna("").astype(str).str.strip()
         present = [i for i in ids if i != ""]
@@ -101,6 +110,7 @@ def prepare_for_llm(
     clean_dates: bool = True,
     sample_items_n: int = 0,
     include_description: bool = True,
+    include_items: bool = True,
 ) -> pd.DataFrame:
     result = df.copy()
     if filter_columns:
@@ -121,7 +131,12 @@ def prepare_for_llm(
         for col in ("Content.StartDate", "Content.EndDate"):
             if col in result.columns:
                 result.loc[is_item, col] = ""
-    if sample_items_n > 0 and "Content.DescriptionLevel" in result.columns and "ParentID" in result.columns:
+    if not include_items and "Content.DescriptionLevel" in result.columns:
+        # Arborescence seule : n'envoyer que les dossiers (RecordGrp), aucun
+        # fichier. Prime sur l'échantillonnage — on ne garde aucun Item, quel que
+        # soit `sample_items_n`. Utile pour ne soumettre que la structure du fonds.
+        result = result[result["Content.DescriptionLevel"] != "Item"]
+    elif sample_items_n > 0 and "Content.DescriptionLevel" in result.columns and "ParentID" in result.columns:
         is_item = result["Content.DescriptionLevel"] == "Item"
         folders = result[~is_item]
         items = result[is_item].copy()
@@ -214,7 +229,7 @@ def validate_output_csv(df: pd.DataFrame) -> list[str]:
 
         parents = {
             str(i).strip(): str(p).strip()
-            for i, p in zip(df["ID"].fillna(""), parent_col)
+            for i, p in zip(df["ID"].fillna(""), parent_col, strict=True)
             if str(p).strip() != ""
         }
         if _has_parent_cycle(parents):
@@ -230,13 +245,6 @@ def validate_output_csv(df: pd.DataFrame) -> list[str]:
 
 
 # ── Parsing des réponses LLM ───────────────────────────────────────────────────
-
-def strip_structure_markers(text: str) -> str:
-    """Supprime les balises internes avant affichage Markdown."""
-    text = re.sub(r"<!--\s*PLAN_STRUCTURE_(?:START|END)\s*-->\n?", "", text, flags=re.IGNORECASE)
-    text = re.sub(r"\s*\[\d[\d\s–\-]*car\.\]", "", text)
-    return text
-
 
 def _extract_structure_block(section_text: str) -> str:
     """Extrait le contenu entre les balises PLAN_STRUCTURE. Fallback sur le texte complet."""
@@ -278,11 +286,18 @@ def extract_plans(llm_response: str) -> dict:
     return result
 
 
-_EXPECTED_CLASSEMENT_HEADERS = ["Path", "TargetFolder", "NewTitle"]
+# En-têtes attendus du CSV de classement. La 1re colonne (identifiant) dépend du
+# mode : `Path` (historique) ou `Ref` (optimisé) — passée explicitement par
+# l'appelant via `id_col`. Les deux dernières sont invariantes.
+_CLASSEMENT_DATA_HEADERS = ["TargetFolder", "NewTitle"]
 
 
-def _inject_header_if_missing(csv_text: str) -> str:
-    """Réinjecte l'en-tête Path;TargetFolder;NewTitle s'il manque.
+def _expected_headers(id_col: str = "Path") -> list[str]:
+    return [id_col, *_CLASSEMENT_DATA_HEADERS]
+
+
+def _inject_header_if_missing(csv_text: str, expected: list[str]) -> str:
+    """Réinjecte l'en-tête `expected` (ex. `Path;TargetFolder;NewTitle`) s'il manque.
 
     Certains modèles (ex. gpt-5.5) produisent les lignes du classement sans la
     ligne d'en-tête. Dans ce cas, la 1re ligne de données serait prise pour
@@ -295,27 +310,27 @@ def _inject_header_if_missing(csv_text: str) -> str:
 
     delim = ";" if ";" in first_line else ","
     fields = [f.strip().strip('"') for f in first_line.split(delim)]
-    if len(fields) != len(_EXPECTED_CLASSEMENT_HEADERS):
+    if len(fields) != len(expected):
         return csv_text
 
     lowered = [f.lower() for f in fields]
-    has_header = any(h.lower() in lowered for h in _EXPECTED_CLASSEMENT_HEADERS)
+    has_header = any(h.lower() in lowered for h in expected)
     if has_header:
         return csv_text
 
-    return delim.join(_EXPECTED_CLASSEMENT_HEADERS) + "\n" + csv_text
+    return delim.join(expected) + "\n" + csv_text
 
 
-def _salvage_classement_csv(csv_text: str) -> pd.DataFrame:
+def _salvage_classement_csv(csv_text: str, expected: list[str]) -> pd.DataFrame:
     """Parse tolérant pour la sortie CLA-001 quand pandas échoue sur des lignes
     au nombre de champs irrégulier.
 
-    Le format est strictement 3 colonnes par design (`Path;TargetFolder;NewTitle`).
+    Le format est strictement 3 colonnes par design (`Ref;TargetFolder;NewTitle`).
     Un modèle peut produire ponctuellement une ligne à 4 champs — un « ; »
     parasite dans `NewTitle`, ou un champ surnuméraire. Plutôt que de jeter toute
     la réponse (appel API déjà consommé), on ramène chaque ligne à exactement
     3 champs : on tronque les champs en trop, on complète les manquants. Les
-    lignes réellement cassées (Path tronqué, TargetFolder absent) seront de toute
+    lignes réellement cassées (Ref absente, TargetFolder absent) seront de toute
     façon signalées en aval par `convert_classement_to_resip`.
     """
     first = next((ln for ln in csv_text.splitlines() if ln.strip()), "")
@@ -338,20 +353,26 @@ def _salvage_classement_csv(csv_text: str) -> pd.DataFrame:
         raise ValueError("Aucune ligne exploitable dans la réponse du LLM.")
 
     header = [h.lstrip("﻿").lower() for h in records[0]]
-    expected = {h.lower() for h in _EXPECTED_CLASSEMENT_HEADERS}
-    data = records[1:] if expected & set(header) else records
+    expected_set = {h.lower() for h in expected}
+    data = records[1:] if expected_set & set(header) else records
 
-    return pd.DataFrame(data, columns=list(_EXPECTED_CLASSEMENT_HEADERS), dtype=str)
+    return pd.DataFrame(data, columns=list(expected), dtype=str)
 
 
-def extract_csv_from_response(llm_response: str) -> pd.DataFrame:
+def extract_csv_from_response(llm_response: str, id_col: str = "Path") -> pd.DataFrame:
     """
     Extrait le bloc CSV de la réponse CLA-001.
+
+    ``id_col`` est le nom de la 1re colonne attendue selon le mode : `Path`
+    (historique) ou `Ref` (optimisé). Sert à réinjecter l'en-tête manquant et à
+    filtrer les marqueurs de livraison.
     Stratégies par ordre de priorité :
     1. Bloc ```csv ... ``` ou ``` ... ```
     2. Ligne d'en-tête SEDA (commence par ID; ou "ID";)
     3. Réponse complète en dernier recours
     """
+    expected = _expected_headers(id_col)
+
     # Stratégie 1 : bloc markdown — prendre le dernier bloc (certains modèles produisent
     # des CSV intermédiaires par phase avant le résultat final)
     pattern = r"```(?:csv)?\s*\n(.*?)```"
@@ -371,7 +392,11 @@ def extract_csv_from_response(llm_response: str) -> pd.DataFrame:
         else:
             csv_text = llm_response.strip()
 
-    csv_text = _inject_header_if_missing(csv_text)
+    # BOM éventuel en tête de bloc : pandas ne le neutralise que sur un flux
+    # d'octets (ici on parse du texte déjà décodé) et il casse la détection du
+    # premier champ entre guillemets (`﻿"Path"`).
+    csv_text = csv_text.lstrip("﻿")
+    csv_text = _inject_header_if_missing(csv_text, expected)
 
     # Auto-détection du séparateur : certains modèles (notamment de raisonnement)
     # ignorent l'instruction « séparateur ; » et produisent un CSV avec virgule
@@ -397,7 +422,7 @@ def extract_csv_from_response(llm_response: str) -> pd.DataFrame:
                 dtype=str,
             )
     except pd.errors.ParserError:
-        return _salvage_classement_csv(csv_text)
+        return _salvage_classement_csv(csv_text, expected)
     # Supprimer les colonnes d'index parasites produites par le LLM
     # (colonne vide "", colonne "Unnamed: X", ou colonne purement numérique)
     clean_cols = [
@@ -409,9 +434,11 @@ def extract_csv_from_response(llm_response: str) -> pd.DataFrame:
     df = df[clean_cols]
     df.columns = [c.strip().lstrip("﻿") for c in df.columns]
 
-    # Supprimer les lignes de marqueurs de livraison (ex: "[FIN DE LA PARTIE X/N]")
-    if "ID" in df.columns:
-        df = df[~df["ID"].astype(str).str.match(r"^\[.*\]$", na=False)]
+    # Supprimer les lignes de marqueurs de livraison (ex: "[FIN DE LA PARTIE X/N]").
+    # La 1re colonne est `id_col` (Path ou Ref) pour CLA-001, `ID` pour un CSV RESIP complet.
+    marker_col = next((c for c in (id_col, "ID") if c in df.columns), None)
+    if marker_col:
+        df = df[~df[marker_col].astype(str).str.match(r"^\[.*\]$", na=False)]
 
     return df
 
@@ -419,9 +446,9 @@ def extract_csv_from_response(llm_response: str) -> pd.DataFrame:
 # ── Classement simplifié (format LLM → RESIP) ──────────────────────────────────
 
 def prepare_for_classement(df: pd.DataFrame, include_description: bool = True) -> pd.DataFrame:
-    """Produit le CSV envoyé au LLM de classement.
+    """Produit la table des items à classer.
 
-    Colonnes de base : Path;CurrentTitle;Date, plus une colonne `Description`
+    Colonnes : `Ref;Path;CurrentTitle;Date`, plus une colonne `Description`
     (la colonne `Content.Description` du CSV source, renommée sous un nom
     lisible) dès que `include_description` est actif et que la colonne est
     présente — même vide partout : on respecte le choix explicite de
@@ -430,10 +457,20 @@ def prepare_for_classement(df: pd.DataFrame, include_description: bool = True) -
     ciblé. Si l'option est désactivée, ou si Content.Description est absente du
     CSV, elle n'est pas envoyée. Le même toggle gouverne aussi l'audit
     (prepare_for_llm).
+
+    `Ref` est un identifiant entier global (1..N, ordre stable de cette table).
+    Il sert d'identifiant *en sortie* du LLM : recopier le chemin complet est
+    coûteux à générer (decode séquentiel, token par token — le goulot de vitesse)
+    alors qu'il n'a qu'un rôle de clé de jointure. En **entrée**, `Path` est
+    conservé (cf. `classement_llm_csv`) : le chemin source est un signal de
+    classement majeur (arborescence parente) et son coût en entrée est négligeable
+    (prefill parallèle). Le LLM renvoie donc `Ref` (et non `Path`), réhydraté en
+    `Path` côté Python (`_ensure_path_column`).
     """
     items = df[df["Content.DescriptionLevel"] == "Item"].copy()
 
     out = pd.DataFrame({
+        "Ref": range(1, len(items) + 1),
         "Path": items["File"].values,
         "CurrentTitle": items["Content.Title"].values,
         "Date": items["Content.StartDate"].values
@@ -447,9 +484,95 @@ def prepare_for_classement(df: pd.DataFrame, include_description: bool = True) -
     return out
 
 
+# Colonnes envoyées au LLM en entrée du classement, selon le mode (cf.
+# prompts.CLA_001) :
+#   • mode « Ref »  : `Ref` (clé courte recopiée en sortie) + `Path` (contexte) ;
+#   • mode « Path » : `Path` seul comme identifiant (recopié en sortie) — méthode
+#     historique. `Path` est présent dans les deux cas (signal de classement :
+#     l'arborescence source).
+_CLASSEMENT_LLM_COLS_REF = ("Ref", "Path", "CurrentTitle", "Date", "Description")
+_CLASSEMENT_LLM_COLS_PATH = ("Path", "CurrentTitle", "Date", "Description")
+
+
+def classement_llm_csv(df_items: pd.DataFrame, ref_mode: bool = False) -> str:
+    """Sérialise les items pour le prompt CLA-001.
+
+    ``ref_mode=True`` envoie `Ref;Path;CurrentTitle;Date[;Description]` : le modèle
+    recopie la `Ref` courte en sortie (gain au decode). ``ref_mode=False``
+    (historique) envoie `Path;CurrentTitle;Date[;Description]` : le modèle recopie
+    le `Path` complet — ancrage plus fort, sortie plus longue.
+    """
+    cols_spec = _CLASSEMENT_LLM_COLS_REF if ref_mode else _CLASSEMENT_LLM_COLS_PATH
+    cols = [c for c in cols_spec if c in df_items.columns]
+    return csv_to_string(df_items[cols])
+
+
 def _folder_title(folder_name: str) -> str:
     """Dérive un titre lisible depuis un nom technique : '1-1_Letres_de_motivation' → 'Letres de motivation'."""
     return re.sub(r"^\d+(-\d+)*_", "", folder_name).replace("_", " ")
+
+
+# Préfixe de position d'un nom technique de dossier ('1_', '1-1_', '2-3_'…).
+_FOLDER_NUMBER_PREFIX_RE = re.compile(r"^\d+(-\d+)*_")
+
+
+def strip_folder_numbers(df_resip: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
+    """Option d'export : retire le préfixe de position des noms techniques de dossier.
+
+    Appliquée au **DataFrame RESIP final** (après `convert_classement_to_resip` :
+    IDs/ParentID posés, stats de conformité calculées). Réécrit la seule colonne
+    `File` des lignes `RecordGrp` (`1-1_Lettres_de_motivation` → `Lettres_de_motivation`) —
+    le `Content.Title` est déjà sans numéro, et le `File` des `Item` est un chemin
+    source (clé de jointure/copie) qui n'est **jamais** touché. Comme le manifeste
+ et la copie physique dérivent tous deux de `File`, ils héritent
+    des noms nettoyés sans code dédié — source unique.
+
+    **Compromis assumé** : sans numéro, les dossiers se trient alphabétiquement (et
+    non plus dans l'ordre métier 1, 2, 3…) — d'où une option, pas un défaut.
+
+    Les collisions de noms entre **frères** (même `ParentID`) après retrait sont
+    dédoublonnées (`_2`, `_3`…) pour rester matérialisables sur disque, et
+    signalées dans les avertissements retournés. Pur, déterministe, sans I/O ;
+    opère sur une **copie** (l'original n'est jamais muté).
+
+    Retourne `(df, renamed)` — `renamed` = avertissements de collision (vide si
+    aucune)."""
+    df = df_resip.copy()
+    if "File" not in df.columns or "Content.DescriptionLevel" not in df.columns:
+        return df, []
+
+    renamed: list[str] = []
+    used_by_parent: dict[str, set[str]] = {}
+    files = df["File"].tolist()
+    levels = df["Content.DescriptionLevel"].tolist()
+    parents = df["ParentID"].tolist() if "ParentID" in df.columns else [""] * len(df)
+
+    for i, (name, level) in enumerate(zip(files, levels, strict=True)):
+        if level != "RecordGrp":
+            continue
+        name = str(name)
+        if name == ".":  # racine — jamais préfixée
+            continue
+        stripped = _FOLDER_NUMBER_PREFIX_RE.sub("", name)
+        if not stripped or stripped == name:  # rien à retirer (ou retrait vide)
+            stripped = name
+        parent_key = str(parents[i])
+        used = used_by_parent.setdefault(parent_key, set())
+        final = stripped
+        if final.casefold() in used:
+            k = 2
+            while f"{stripped}_{k}".casefold() in used:
+                k += 1
+            final = f"{stripped}_{k}"
+            renamed.append(
+                f"Collision de noms après retrait des numéros : "
+                f"'{stripped}' déjà pris sous le même parent → '{final}'."
+            )
+        used.add(final.casefold())
+        files[i] = final
+
+    df["File"] = files
+    return df, renamed
 
 
 def _preserve_extension(path: str, new_title: str) -> str:
@@ -508,27 +631,38 @@ def _technical_segment(line: str) -> str:
     return _PLAN_ARROW_RE.split(line)[-1]
 
 
+def _arborescence_block(plan_valide: str) -> str:
+    """Bloc « Arborescence technique » du plan, ou le texte entier en repli.
+
+    Le LLM place tantôt l'arbre dans un bloc ```text``` qui suit l'en-tête,
+    tantôt l'en-tête lui-même DANS le bloc (en-tête + arbre dans le même fence)
+    — auquel cas il n'y a pas de fence juste après l'en-tête. On ne dépend donc
+    pas d'un fence : on capture tout ce qui suit l'en-tête jusqu'à la section
+    suivante (Préconisations) ou la fin ; les fences ```` éventuels sont ignorés
+    par _FOLDER_RE puisqu'ils ne se terminent pas par « / ».
+
+    Repli sans en-tête : un petit modèle qui n'a pas suivi le gabarit — ou un
+    plan saisi/collé à la main — produit l'arbre sans le titre de section.
+    Plutôt que de rejeter le plan, on retombe sur le texte entier : les lignes
+    de dossiers « titre → nom_technique/ » restent identifiables par _FOLDER_RE,
+    qui ignore naturellement la prose (aucun « / » terminal). Miroir de
+    web/lib/csv/plan-tree.ts::arborescenceBlock.
+    """
+    header = re.search(r"[Aa]rborescence\s+technique", plan_valide)
+    block = plan_valide[header.end():] if header else plan_valide
+    stop = re.search(r"[Pp]r[ée]conisation", block)
+    if stop:
+        block = block[: stop.start()]
+    return block
+
+
 def parse_plan_tree(plan_valide: str) -> dict:
     """
     Parse l'arborescence technique du plan validé.
     Retourne {folder_name: parent_folder_name | None}.
     None = parent est la racine (File=".").
     """
-    # Localise l'en-tête de l'arborescence technique. Le LLM place tantôt l'arbre
-    # dans un bloc ```text``` qui suit l'en-tête, tantôt l'en-tête lui-même DANS le
-    # bloc (en-tête + arbre dans le même fence) — auquel cas il n'y a pas de fence
-    # juste après l'en-tête. On ne dépend donc plus d'un fence : on capture tout ce
-    # qui suit l'en-tête jusqu'à la section suivante (Préconisations) ou la fin, et
-    # on en extrait les lignes de dossier (les fences ```` éventuels sont ignorés
-    # par _FOLDER_RE puisqu'ils ne se terminent pas par « / »).
-    header = re.search(r"[Aa]rborescence\s+technique", plan_valide)
-    if not header:
-        return {}
-
-    block = plan_valide[header.end():]
-    stop = re.search(r"[Pp]r[ée]conisation", block)
-    if stop:
-        block = block[: stop.start()]
+    block = _arborescence_block(plan_valide)
 
     folders = []
     for line in block.split("\n"):
@@ -538,7 +672,7 @@ def parse_plan_tree(plan_valide: str) -> dict:
             if name and "_" in name and name != "Dossier_racine":
                 folders.append(name)
 
-    result = {}
+    result: dict[str, str | None] = {}
     for folder in folders:
         prefix = folder.split("_")[0]
         parts = prefix.split("-")
@@ -585,14 +719,7 @@ def parse_plan_titles(plan_valide: str) -> dict:
     dict vide pour un plan à l'ancien format (sans flèche) : l'appelant retombe
     alors sur ``_folder_title`` (titre dérivé du nom technique).
     """
-    header = re.search(r"[Aa]rborescence\s+technique", plan_valide)
-    if not header:
-        return {}
-
-    block = plan_valide[header.end():]
-    stop = re.search(r"[Pp]r[ée]conisation", block)
-    if stop:
-        block = block[: stop.start()]
+    block = _arborescence_block(plan_valide)
 
     titles = {}
     for line in block.split("\n"):
@@ -610,6 +737,130 @@ def parse_plan_titles(plan_valide: str) -> dict:
         if title:
             titles[name] = title
     return titles
+
+
+def _slugify_root(title: str) -> str:
+    """Nom technique de la racine dérivé de son titre (la racine a File='.').
+
+    Espaces et ponctuation → « _ », répétitions écrasées. Les lettres accentuées
+    sont conservées (``\\w`` unicode), cohérent avec ``_FOLDER_RE``.
+    """
+    slug = re.sub(r"[^\w]+", "_", (title or "").strip(), flags=re.UNICODE).strip("_")
+    return slug or "Fonds"
+
+
+def _sort_id_key(value: str):
+    """Tri stable des enfants par ID : numérique si possible, lexical en repli."""
+    s = str(value).strip()
+    return (0, int(s)) if _is_int(s) else (1, s)
+
+
+def build_reference_tree_from_folders(df: pd.DataFrame) -> tuple[str, list[str], dict]:
+    """Convertit un CSV Resip « dossiers seuls » en **bloc arborescence** injectable
+    comme plan de classement de référence à l'audit.
+
+    - Ne retient que les lignes ``RecordGrp`` ; les fichiers (``Item``) sont
+      **ignorés** avec un avertissement non bloquant (décision produit).
+    - **Noms conservés verbatim** : le nom technique est le basename du dossier
+      (colonne ``File``), le titre descriptif est ``Content.Title`` (repli sur un
+      titre dérivé du nom). Aucun préfixe numérique n'est ajouté — la hiérarchie
+      du bloc est portée par l'**indentation ASCII**, déduite des ``ParentID``.
+    - Ce bloc est du **contexte-guide** pour AUD-001 (canal note contextuelle), il
+      n'est pas reparsé par ``parse_plan_tree`` — d'où l'absence de contrainte de
+      préfixe numérique.
+
+    Retourne ``(bloc_arborescence, warnings, stats)``. Lève ``ValueError`` si le
+    CSV ne contient aucun dossier (``RecordGrp``).
+    """
+    level = df.get("Content.DescriptionLevel")
+    warnings: list[str] = []
+
+    item_count = int((level == "Item").sum()) if level is not None else 0
+    if item_count:
+        warnings.append(
+            f"{item_count} ligne(s) fichier (Item) ignorée(s) — "
+            "seuls les dossiers sont retenus pour le référentiel."
+        )
+
+    folders = df[df["Content.DescriptionLevel"] == "RecordGrp"].copy() \
+        if level is not None else df.iloc[0:0].copy()
+    if folders.empty:
+        raise ValueError(
+            "Aucun dossier (RecordGrp) trouvé : ce CSV ne décrit pas d'arborescence."
+        )
+
+    ids = folders["ID"].fillna("").astype(str).str.strip()
+    parent_ids = folders["ParentID"].fillna("").astype(str).str.strip()
+    files = folders["File"].fillna("").astype(str)
+    titles = folders["Content.Title"].fillna("").astype(str)
+
+    # Nom technique = basename du chemin dossier (verbatim). Racine (File=".") : pas
+    # de nom de dossier → slug dérivé du titre.
+    def _folder_name(file_path: str, title: str) -> str:
+        base = file_path.rsplit("/", 1)[-1].strip()
+        if base in ("", "."):
+            return _slugify_root(title)
+        return base
+
+    children: dict[str, list[str]] = {}
+    node_title: dict[str, str] = {}
+    node_name: dict[str, str] = {}
+    root_ids: list[str] = []
+    explicit_roots: list[str] = []
+
+    id_set = set(ids)
+    root_mask = (files.str.strip() == ".") & (parent_ids == "")
+    for idx, node_id in ids.items():
+        title = titles[idx].strip()
+        name = _folder_name(files[idx], title)
+        node_title[node_id] = title or _folder_title(name)
+        node_name[node_id] = name
+        parent = parent_ids[idx]
+        if root_mask[idx]:
+            explicit_roots.append(node_id)
+        if root_mask[idx] or parent == "" or parent not in id_set:
+            root_ids.append(node_id)
+        else:
+            children.setdefault(parent, []).append(node_id)
+
+    for kids in children.values():
+        kids.sort(key=_sort_id_key)
+    root_ids.sort(key=_sort_id_key)
+    explicit_roots.sort(key=_sort_id_key)
+
+    # Racine unique explicite (File=".") si présente, sinon on synthétise un
+    # fonds englobant les racines multiples pour un bloc à racine unique.
+    lines: list[str] = []
+
+    def _render(node_id: str, prefix: str, is_last: bool) -> None:
+        connector = "└── " if is_last else "├── "
+        lines.append(f"{prefix}{connector}{node_title[node_id]} → {node_name[node_id]}/")
+        kids = children.get(node_id, [])
+        child_prefix = prefix + ("    " if is_last else "│   ")
+        for i, kid in enumerate(kids):
+            _render(kid, child_prefix, i == len(kids) - 1)
+
+    if len(explicit_roots) == 1:
+        root_id = explicit_roots[0]
+        root_title = node_title[root_id]
+        lines.append(f"Fonds — [{root_title}] → {node_name[root_id]}/")
+        top = children.get(root_id, [])
+        for i, kid in enumerate(top):
+            _render(kid, "  ", i == len(top) - 1)
+    else:
+        # Racine absente ou multiple : fonds synthétique englobant.
+        lines.append("Fonds — [Plan de classement de référence] → Fonds/")
+        for i, root_id in enumerate(root_ids):
+            _render(root_id, "  ", i == len(root_ids) - 1)
+        root_title = "Plan de classement de référence"
+
+    tree_block = "```text\n" + "\n".join(lines) + "\n```"
+    stats = {
+        "folderCount": len(folders),
+        "ignoredItemCount": item_count,
+        "rootTitle": root_title,
+    }
+    return tree_block, warnings, stats
 
 
 def _ancestors_inclusive(name: str, folder_tree: dict, cache: dict | None = None) -> list:
@@ -635,6 +886,32 @@ def _ancestors_inclusive(name: str, folder_tree: dict, cache: dict | None = None
     return result
 
 
+def _ensure_path_column(df_llm: pd.DataFrame, df_original: pd.DataFrame) -> pd.DataFrame:
+    """Réhydrate la colonne `Path` à partir de la `Ref` produite par le LLM.
+
+    Le modèle reçoit/renvoie une référence courte (`Ref`, un entier) au lieu du
+    chemin complet : sortie plus rapide (decode séquentiel) et jointure plus
+    fiable. La correspondance `Ref→Path` est re-dérivée de façon déterministe
+    depuis le CSV original (même ordre 1..N que `prepare_for_classement`).
+
+    - No-op si `Path` est déjà présent (sortie d'un ancien run ou projet persisté
+      avant la migration `Ref`) → rétro-compatibilité.
+    - No-op si ni `Path` ni `Ref` ne sont là : `convert_classement_to_resip`
+      lèvera ensuite son erreur de colonnes explicite.
+    - Une `Ref` non résolvable (hallucinée par le modèle) donne un `Path` vide,
+      signalé en aval (« Path introuvable » + « Fichier non classé »).
+    """
+    if "Path" in df_llm.columns or "Ref" not in df_llm.columns:
+        return df_llm
+    ref_map = prepare_for_classement(df_original)
+    ref_to_path = dict(
+        zip(ref_map["Ref"].astype(str).str.strip(), ref_map["Path"].astype(str), strict=True)
+    )
+    df = df_llm.copy()
+    df.insert(0, "Path", df["Ref"].astype(str).str.strip().map(ref_to_path).fillna(""))
+    return df
+
+
 def _slug_created(name: str) -> str:
     """Nom technique assaini (FS/SEDA) d'un sous-dossier créé : ponctuation et
     espaces → « _ », répétitions écrasées, accents conservés (``\\w`` unicode,
@@ -647,15 +924,15 @@ def _resolve_targets(
 ) -> tuple[pd.Series, dict[str, str], list[str]]:
     """Résout chaque ``TargetFolder`` brut en nom canonique.
 
-    Cas courant : on ne garde que le **nom de feuille** — le LLM produit parfois un
-    chemin ``parent/enfant`` où l'enfant est un vrai dossier du plan.
+    Cas courant (inchangé) : on ne garde que le **nom de feuille** — le LLM produit
+    parfois un chemin ``parent/enfant`` où l'enfant est un vrai dossier du plan.
 
-    Cas création autorisée : quand la feuille n'est **pas** un dossier du plan mais
-    que le segment parent l'est **et** figure dans ``allowed_parents``, la feuille
-    est une **création légitime** sous ce parent. On lui attribue un nom technique
-    canonique ``{préfixe_parent}-{k}_{slug}`` (collision-proof, déterministe) et on
-    la rattache au parent. ``allowed_parents`` vide ⇒ aucune création reconnue →
-    comportement **byte-identique** à l'existant.
+    Cas création autorisée : quand la feuille n'est **pas** un dossier du plan
+    mais que le segment parent l'est **et** figure dans ``allowed_parents``, la
+    feuille est une **création légitime** sous ce parent. On lui attribue un nom
+    technique canonique ``{préfixe_parent}-{k}_{slug}`` (collision-proof,
+    déterministe) et on la rattache au parent. ``allowed_parents`` vide ⇒ aucune
+    création reconnue → comportement **byte-identique** à l'existant.
 
     Retourne ``(cibles_résolues, created_folders {canonique: parent}, warnings)``.
     """
@@ -744,21 +1021,41 @@ def convert_classement_to_resip(
     allowed_parents: set[str] | None = None,
 ) -> tuple:
     """
-    Convertit la sortie LLM (Path;TargetFolder;NewTitle) en CSV RESIP complet.
+    Convertit la sortie LLM (Ref;TargetFolder;NewTitle) en CSV RESIP complet.
+    La `Ref` est d'abord réhydratée en `Path` (`_ensure_path_column`) ; toute la
+    suite raisonne sur `Path` comme auparavant.
+
+    `allowed_parents` : ensemble des dossiers du plan sous lesquels le
+    classement est autorisé à **créer des sous-dossiers** (dérivé des consignes de
+    l'archiviste par `core.cla_directives.allowed_parents`). Un `TargetFolder` de
+    la forme `parent_autorisé/Nouveau_sous_dossier` est alors traité comme une
+    **création légitime** — sous-dossier créé et rattaché au parent, jamais à la
+    racine, compté à part (`foldersCreatedAuthorized`) et **exclu** de
+    `foldersOffPlan`/de l'échec `planMatches`. Vide/None ⇒ comportement inchangé
+    (un dossier inventé reste un hors-plan signalé).
+
     Retourne (df_resip, warnings: list[str], stats: dict) où `stats` porte la
     conformité au plan calculée à la source : l'arborescence produite par le
     classement est-elle identique à celle du plan validé (`planMatches`), et sinon
-    quels dossiers diffèrent (`foldersOffPlan`, `foldersMissing`).
-
-    `allowed_parents` : ensemble des dossiers du plan sous lesquels le classement
-    est autorisé à **créer des sous-dossiers** (dérivé des consignes de l'archiviste
-    par `core.cla_directives.allowed_parents`). Un `TargetFolder` de la forme
-    `parent_autorisé/Nouveau_sous_dossier` est alors traité comme une **création
-    légitime** — sous-dossier créé et rattaché au parent, jamais à la racine, compté
-    à part (`foldersCreatedAuthorized`) et **exclu** de `foldersOffPlan`. Vide ⇒
-    conversion inchangée (un dossier inventé reste un hors-plan).
+    quels dossiers diffèrent (`foldersOffPlan`, `foldersMissing`). `stats` porte
+    aussi les compteurs de qualité du classement —
+    chaque garde-fou est compté à la source, en plus de son avertissement texte :
+    `extensionsFixed`, `itemsUnclassified`, `targetsUnknown`, `pathsNotFound`,
+    `refsUnresolved` (mode Ref), `itemsTotal`, `itemsClassified`. Le front les
+    affiche, la CLI les journalise, `cli.py eval` les agrège.
     """
     warnings_out = []
+
+    # Réhydrate Path depuis Ref (format LLM optimisé) avant tout traitement.
+    # En mode Ref, une référence hallucinée donne un Path vide : compté ici
+    # (taux d'identifiants non résolus), signalé en aval ligne par ligne.
+    had_ref = "Path" not in df_llm.columns and "Ref" in df_llm.columns
+    df_llm = _ensure_path_column(df_llm, df_original)
+    refs_unresolved = (
+        int((df_llm["Path"].astype(str).str.strip() == "").sum())
+        if had_ref and "Path" in df_llm.columns
+        else 0
+    )
 
     expected_cols = {"Path", "TargetFolder", "NewTitle"}
     missing = expected_cols - set(df_llm.columns)
@@ -767,16 +1064,36 @@ def convert_classement_to_resip(
             "Le CSV produit par le LLM ne contient pas les colonnes attendues "
             f"(manquantes : {', '.join(sorted(missing))}). "
             f"Colonnes reçues : {', '.join(df_llm.columns.tolist())}. "
-            "Le modèle n'a pas respecté le format Path;TargetFolder;NewTitle."
+            "Le modèle n'a pas respecté le format Ref;TargetFolder;NewTitle."
         )
 
     df_llm = df_llm.copy()
+
+    # Parser le plan avant la résolution des cibles (nécessaire pour reconnaître
+    # une création autorisée : parent réel du plan + feuille nouvelle).
+    folder_tree = parse_plan_tree(plan_valide)
+    folder_titles = parse_plan_titles(plan_valide)
+    if not folder_tree:
+        warnings_out.append("Arborescence technique non trouvée dans le plan — vérifier le format.")
+
+    # Résoudre TargetFolder : cas courant, on ne garde que le nom de feuille (le
+    # LLM produit parfois "1_Parent/1-1_Enfant" alors qu'on n'a besoin que de la
+    # feuille pour le lookup). Cas création autorisée : "parent/Nouveau"
+    # sous un parent de `allowed_parents` → sous-dossier créé, rattaché au parent.
+    allowed = {a for a in (allowed_parents or set()) if a in folder_tree}
+    df_llm["TargetFolder"], created_folders, creation_warnings = _resolve_targets(
+        df_llm["TargetFolder"], folder_tree, allowed
+    )
+    # Arbre effectif = plan + sous-dossiers créés (parent réel connu). Sert au
+    # rattachement, à l'expansion des ancêtres et au calcul des dates ; la
+    # conformité, elle, reste mesurée contre le plan seul (`folder_tree`).
+    folder_tree_eff = {**folder_tree, **created_folders}
 
     # Garde-fou déterministe : forcer l'extension du NewTitle à correspondre à
     # celle du Path. Le LLM convertit parfois .docx en .pdf, .xlsx en .csv, etc.
     fixed_details: list[str] = []
     new_titles = []
-    for path, title in zip(df_llm["Path"].astype(str), df_llm["NewTitle"].astype(str)):
+    for path, title in zip(df_llm["Path"].astype(str), df_llm["NewTitle"].astype(str), strict=True):
         corrected = _preserve_extension(path, title)
         if corrected != title:
             fixed_details.append(f"`{path}` : `{title}` → `{corrected}`")
@@ -788,27 +1105,6 @@ def convert_classement_to_resip(
             f"{len(fixed_details)} NewTitle(s) corrigé(s) : extension réalignée sur celle du Path d'origine. "
             f"Détails : {details_str}"
         )
-
-    # 1. Parser le plan
-    folder_tree = parse_plan_tree(plan_valide)
-    # Titres descriptifs portés par l'arborescence fusionnée (titre → nom
-    # technique). Vide si plan à l'ancien format : on retombe sur _folder_title.
-    folder_titles = parse_plan_titles(plan_valide)
-    if not folder_tree:
-        warnings_out.append("Arborescence technique non trouvée dans le plan — vérifier le format.")
-
-    # Résoudre TargetFolder : cas courant, on ne garde que le nom de feuille (le
-    # LLM produit parfois "1_Parent/1-1_Enfant" alors qu'on n'a besoin que de la
-    # feuille pour le lookup). Cas création autorisée : "parent/Nouveau" sous un
-    # parent de `allowed_parents` → sous-dossier créé, rattaché au parent.
-    allowed = {a for a in (allowed_parents or set()) if a in folder_tree}
-    df_llm["TargetFolder"], created_folders, creation_warnings = _resolve_targets(
-        df_llm["TargetFolder"], folder_tree, allowed
-    )
-    # Arbre effectif = plan + sous-dossiers créés (parent réel connu). Sert au
-    # rattachement, à l'expansion des ancêtres et au calcul des dates ; la
-    # conformité, elle, reste mesurée contre le plan seul (`folder_tree`).
-    folder_tree_eff = {**folder_tree, **created_folders}
 
     # 2. Racine originale
     root_mask = (df_original["File"].fillna("") == ".") & (df_original["ParentID"].fillna("") == "")
@@ -826,9 +1122,9 @@ def convert_classement_to_resip(
     # malformées sont écartées ici (donc aucun RecordGrp) ; leurs items seront
     # rattachés à la racine et signalés dans la boucle ci-dessous. Les vrais
     # dossiers hors plan (sans extension) restent créés et comptés comme écart.
-    # Note : les sous-dossiers créés sous autorisation sont dans `folder_tree_eff`
-    # (pas dans `folder_tree`) mais ne ressemblent jamais à un fichier → ils passent
-    # le filtre comme des dossiers normaux.
+    # Note : les sous-dossiers créés sont dans `folder_tree_eff` (pas dans
+    # `folder_tree`) mais ne ressemblent jamais à un fichier → ils passent le filtre
+    # et entrent dans `needed` ; leur chaîne d'ancêtres remonte via l'arbre effectif.
     needed = {
         t
         for t in df_llm["TargetFolder"].dropna().astype(str).unique()
@@ -874,11 +1170,14 @@ def convert_classement_to_resip(
 
     # Vérifier les fichiers manquants dans la sortie LLM
     llm_paths = set(df_llm["Path"].astype(str))
-    for missing_path in sorted(set(orig_by_path.index) - llm_paths):
+    unclassified_paths = sorted(set(orig_by_path.index) - llm_paths)
+    for missing_path in unclassified_paths:
         warnings_out.append(f"Fichier non classé (absent de la sortie LLM) : '{missing_path}'")
 
     item_rows = []
     n_malformed = 0
+    n_targets_unknown = 0
+    n_paths_not_found = 0
     for _, llm_row in df_llm.iterrows():
         path = str(llm_row.get("Path", ""))
         target = str(llm_row.get("TargetFolder", ""))
@@ -886,15 +1185,17 @@ def convert_classement_to_resip(
 
         # Cible malformée : nom de fichier (extension) au lieu d'un dossier du plan.
         # Écartée de `needed` plus haut → pas dans `folder_ids`. On ne perd pas le
-        # fichier : il est rattaché à la racine et signalé distinctement. Un
-        # sous-dossier créé sous autorisation est dans `folder_tree_eff` et sans
-        # extension — jamais concerné.
+        # fichier : il est rattaché à la racine et signalé distinctement. (Un
+        # sous-dossier créé, est dans `folder_tree_eff` et sans extension —
+        # jamais malformé.)
         malformed = bool(target) and target not in folder_tree_eff and _looks_like_file(target)
 
         if not target or (target not in folder_ids and not malformed):
+            n_targets_unknown += 1
             warnings_out.append(f"TargetFolder inconnu : '{target}' pour '{path}'")
             continue
         if path not in orig_by_path.index:
+            n_paths_not_found += 1
             warnings_out.append(f"Path introuvable dans l'original : '{path}'")
             continue
 
@@ -928,7 +1229,7 @@ def convert_classement_to_resip(
         )
         for _, r in orig_items.iterrows()
     }
-    llm_target_map = dict(zip(df_llm["Path"].astype(str), df_llm["TargetFolder"].astype(str)))
+    llm_target_map = dict(zip(df_llm["Path"].astype(str), df_llm["TargetFolder"].astype(str), strict=True))
 
     folder_starts: dict[str, str] = {}
     folder_ends: dict[str, str] = {}
@@ -976,10 +1277,10 @@ def convert_classement_to_resip(
     # LLM, donc circulaire — un dossier inventé y figurerait aussi). Les dossiers
     # produits sont exactement les RecordGrp construits ci-dessus.
     #
-    # Un **sous-dossier créé sous autorisation** (`created_folders`) n'est ni un
-    # hors-plan (l'archiviste l'a explicitement permis) ni une non-conformité : il
-    # est retiré de `folders_off_plan` et compté à part
-    # (`foldersCreatedAuthorized`), `planMatches` reste signifiant.
+    # Un **sous-dossier créé sous autorisation** (`created_folders`) n'est
+    # ni un hors-plan (l'archiviste l'a explicitement permis) ni une non-conformité :
+    # il est retiré de `folders_off_plan` et compté à part (`foldersCreatedAuthorized`),
+    # `planMatches` reste signifiant.
     plan_folders = set(folder_tree)
     output_folders = {str(r["File"]) for r in rg_rows}
     created_materialized = sorted(output_folders & set(created_folders))
@@ -996,6 +1297,8 @@ def convert_classement_to_resip(
 
     # Stats construites à la source — le front se contente de les afficher.
     # `planMatches` : True ssi le plan a pu être lu ET aucun écart dans les deux sens.
+    # Les compteurs doublent les avertissements texte pour être agrégeables
+    # sans re-parser les messages (harnais d'évaluation, futur triage).
     stats = {
         "planParsed": bool(folder_tree),
         "planFolders": len(plan_folders),
@@ -1004,9 +1307,19 @@ def convert_classement_to_resip(
         "foldersMissing": folders_missing,
         "itemsMalformed": int(n_malformed),
         "planMatches": bool(folder_tree) and not folders_off_plan and not folders_missing,
-        # Sous-dossiers créés sous autorisation d'une consigne : liste + rattachement.
+        # Sous-dossiers créés sous autorisation : liste + rattachement.
         "foldersCreatedAuthorized": created_materialized,
-        "foldersCreatedParents": {f: created_folders[f] for f in created_materialized},
+        "foldersCreatedParents": {
+            f: created_folders[f] for f in created_materialized
+        },
+        # Compteurs de qualité du classement.
+        "itemsTotal": int(len(orig_by_path)),
+        "itemsClassified": int(len(item_rows)),
+        "itemsUnclassified": int(len(unclassified_paths)),
+        "extensionsFixed": int(len(fixed_details)),
+        "targetsUnknown": int(n_targets_unknown),
+        "pathsNotFound": int(n_paths_not_found),
+        "refsUnresolved": int(refs_unresolved),
     }
 
     return df_result[ordered_cols], warnings_out, stats

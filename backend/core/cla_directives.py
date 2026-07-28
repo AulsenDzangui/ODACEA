@@ -1,23 +1,32 @@
-"""Consignes de classement de l'archiviste — préconisations rédigées **par
-dossier** du plan ou **au niveau du fonds**, réinjectées dans le classement du
-**même fonds** pour l'affiner (« range les CV et les lettres de motivation par
-employeur dans ce dossier »).
+"""Consignes de classement ancrées au plan — préconisations de
+l'archiviste, **par dossier** du plan ou **au niveau du fonds**, réinjectées dans
+un re-run CLA-001 du **même fonds** pour affiner le classement (« range les CV
+et LM par employeur dans ce dossier »).
 
-Principe : la **formulation** du bloc de consignes vit dans le moteur ; le prompt
-CLA-001 ne fait qu'**accueillir** le bloc via un canal optionnel (`directives=`).
-Sans consigne, le prompt est **byte-identique** à la version précédente.
+Principe (contrainte « moteur unique ») : la **formulation** du bloc de consignes
+vit dans le moteur — comme `reference_plans.render_reference_constraint` et
+`corrections.render_corrections_examples` — et non dans le texte du prompt.
+`prompts/CLA_001.py` ne fait qu'**accueillir** le bloc via un canal optionnel
+(`directives=`), au même titre que la note contextuelle d'AUD-001. Sans consigne,
+le prompt est **byte-identique** à la version précédente.
 
-**Métadonnées seules** : une consigne est un **texte rédigé par l'archiviste**
-(+ éventuellement le nom technique d'un dossier du plan qu'elle vise), jamais le
-contenu d'un document.
+**Métadonnées seules** : une consigne est un **texte rédigé par
+l'archiviste** (+ éventuellement le nom technique d'un dossier du plan qu'elle
+vise), jamais le contenu d'un document.
 
-**Création de sous-dossiers** : une consigne peut porter ``allow_creation=True``
-— elle **autorise** alors le classement à créer des sous-dossiers sous le dossier
-visé (cas déclencheur : « un sous-dossier par employeur », qui ne peut être
-pré-créé à la main). ``allowed_parents`` en dérive l'ensemble des dossiers du plan
-sous lesquels ``convert_classement_to_resip`` doit traiter un ``TargetFolder`` de
-la forme ``dossier/Nouveau_sous_dossier`` comme une création légitime (rattachée au
-bon parent), et non comme un dossier hors plan.
+**Création de sous-dossiers autorisée** : une consigne peut porter
+``allow_creation=True`` — elle **autorise** alors le classement à créer des
+sous-dossiers sous le dossier visé (cas déclencheur : « un sous-dossier par
+employeur », qui ne peut être pré-créé à la main). ``allowed_parents`` en dérive
+l'ensemble des dossiers du plan sous lesquels ``convert_classement_to_resip`` doit
+traiter un ``TargetFolder`` de la forme ``dossier/Nouveau_sous_dossier`` comme une
+création légitime (rattachée au bon parent), et non comme un dossier hors plan.
+
+⚠️ **Attention** — accueillir des consignes *modifie le prompt* (le modèle
+reçoit un contenu nouveau) : ``PROMPT_VERSION`` de CLA-001 est incrémenté et
+l'**efficacité** se mesure sur modèles réels via le harnais d'évaluation (métrique
+``directivesFollowedPct``, `core.evals`). Le présent module et son câblage
+(CLI/API) sont **déterministes et testés sans LLM**.
 """
 from __future__ import annotations
 

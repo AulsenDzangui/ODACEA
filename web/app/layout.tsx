@@ -24,9 +24,9 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "ODACEA - Outil Documentaire d'Audit et de Classement d'Archives Électroniques",
+  title: "ODACEA - Outil Documentaire d'Audit, de Classement et d'Évaluation d'Archives",
   description:
-    "Outil documentaire d'audit et de classement d'archives électroniques",
+    "Outil documentaire d'audit, de classement et d'évaluation d'archives",
 };
 
 export default function RootLayout({

@@ -9,7 +9,7 @@ l'archiviste :
 - comme **document de vérification** (relire la structure cible sans ouvrir le
   CSV ligne à ligne) ;
 - comme **modèle de répertoires** à matérialiser sur disque, que RESIP sait
-  importer par glisser-déposer d'un dossier (voir `docs/F5_EXPORT_SEDA.md` pour
+  importer par glisser-déposer d'un dossier (voir la documentation d'export pour
   l'étude des formats d'import RESIP et la décision de périmètre).
 
 Moteur **pur, déterministe, sans LLM ni I/O** — consommé par la CLI
@@ -227,7 +227,7 @@ def format_tree_manifest_markdown(manifest: dict) -> str:
     lines += ["", f"## Répertoires modèle ({len(directories)})", ""]
     lines.append(
         "> Structure de dossiers à matérialiser pour un import par glisser-déposer "
-        "dans RESIP (cf. `docs/F5_EXPORT_SEDA.md`)."
+        "dans RESIP."
     )
     lines.append("")
     if directories:

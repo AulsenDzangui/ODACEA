@@ -21,5 +21,5 @@ Décrivez le changement en une ou deux phrases.
 
 - [ ] `web/` : `npm run lint` et `npm run build` passent (si front modifié)
 - [ ] `backend/` : la CLI et `uvicorn api.main:app` démarrent (si moteur/API modifié)
-- [ ] Prompts modifiés : validés sur un **modèle local 14B** (cf. philosophie du projet)
+- [ ] Prompts modifiés : validés en les exécutant (approche cloud ou locale, au choix)
 - [ ] Aucune donnée sensible ni secret (`.env`, clés API) introduit

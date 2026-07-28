@@ -1,3 +1,6 @@
+// Colonnes attendues d'un CSV Archifiltre/RESIP. Utilisé en présentation
+// uniquement (détection d'un CSV final incomplet) — la validation d'entrée et
+// de sortie est faite côté backend (`validate_csv` / `validate_output_csv`).
 export const REQUIRED_COLUMNS = [
   "ID",
   "ParentID",
@@ -7,15 +10,3 @@ export const REQUIRED_COLUMNS = [
   "Content.StartDate",
   "Content.EndDate",
 ] as const;
-
-export const VALID_DESCRIPTION_LEVELS = [
-  "RecordGrp",
-  "SubGrp",
-  "Series",
-  "Subseries",
-  "File",
-  "Item",
-  "OtherLevel",
-] as const;
-
-export type DescriptionLevel = (typeof VALID_DESCRIPTION_LEVELS)[number];

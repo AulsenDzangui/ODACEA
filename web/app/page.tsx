@@ -5,22 +5,35 @@ import { Suspense, useEffect, useRef, useState } from "react";
 import { useWizard } from "@/lib/store";
 import { Sidebar } from "@/components/sidebar";
 import { SettingsModal } from "@/components/settings-modal";
+import { AgentModal } from "@/components/agent/agent-modal";
 import { Breadcrumb } from "@/components/breadcrumb";
+import { StatusPill, BackendDownBanner } from "@/components/status-bar";
 import { StepUpload } from "@/components/wizard/step-upload";
 import { StepAudit } from "@/components/wizard/step-audit";
 import { StepClassement } from "@/components/wizard/step-classement";
 import { AppHeader } from "@/components/app-header";
-import { ModelBadge } from "@/components/model-badge";
+import { PrintReport } from "@/components/print-report";
+import { STEP_ACTIONS_FOOTER_ID } from "@/components/wizard/step-actions";
+import { DEMO_MODE } from "@/lib/llm/config";
 import { Button } from "@/components/ui/button";
-import { Menu, BookOpen, PanelLeft, Settings } from "lucide-react";
+import { Menu, BookOpen, PanelLeft, Settings, ShieldCheck, BarChart3, MessageSquare } from "lucide-react";
 
 const SIDEBAR_COLLAPSED_KEY = "odacea-sidebar-collapsed";
 
 export default function Home() {
   const step = useWizard((s) => s.step);
+  // Identité du projet courant : sert de `key` à l'étape de classement. Charger
+  // un autre projet alors qu'on y est déjà doit la remonter, sinon son état
+  // local (lots du classement, repris ou en cours) resterait celui du projet
+  // précédent — et une relance de lot viserait le mauvais fonds. Les deux
+  // premières étapes n'ont pas de clé : le projet est matérialisé pendant
+  // l'étape d'audit (au premier rapport), les remonter reviendrait à effacer la
+  // démarche streamée à l'instant même où elle vient d'aboutir.
+  const currentStem = useWizard((s) => s.currentStem);
   const setSettingsModalOpen = useWizard((s) => s.setSettingsModalOpen);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
+  const [agentModalOpen, setAgentModalOpen] = useState(false);
 
   const closeMobile = () => setMobileOpen(false);
 
@@ -39,12 +52,39 @@ export default function Home() {
   };
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden">
-      <AppHeader badge={<ModelBadge />}>
+    <>
+    {/* Coquille applicative — masquée à l'impression (cf. PrintReport, D6). */}
+    <div className="flex h-screen flex-col overflow-hidden print:hidden">
+      <AppHeader badge={<StatusPill />}>
         <Button asChild variant="ghost" size="default" title="Documentation">
           <Link href="/docs">
             <BookOpen className="h-3.5 w-3.5" />
             <span className="hidden sm:inline">Documentation</span>
+          </Link>
+        </Button>
+        {/* Agent : modale plutôt que page dédiée, toujours
+            disponible sans quitter l'étape en cours. Masqué en démo — le
+            backend le refuse (agt_disabled, état de session serveur). */}
+        {!DEMO_MODE && (
+          <Button
+            variant="ghost"
+            size="default"
+            title="Agent"
+            onClick={() => setAgentModalOpen(true)}
+          >
+            <MessageSquare className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">Agent</span>
+          </Button>
+        )}
+        <Button
+          asChild
+          variant="ghost"
+          size="default"
+          title="Statistiques de projets"
+        >
+          <Link href="/tableau-de-bord">
+            <BarChart3 className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">Statistiques</span>
           </Link>
         </Button>
         <Button
@@ -109,20 +149,45 @@ export default function Home() {
         {/* Colonne de droite : breadcrumb (fixe, en tête) + contenu scrollable.
             Le breadcrumb est ici borné à la zone de contenu, la sidebar démarre
             donc juste sous le header et occupe toute la hauteur. */}
-        <div className="flex min-w-0 flex-1 flex-col">
+        <div className="relative flex min-w-0 flex-1 flex-col">
+          {DEMO_MODE && (
+            <div className="flex items-center justify-center gap-2 border-b border-(--ink-100) bg-(--paper-100) px-4 py-1.5 text-center text-xs text-(--ink-600) dark:border-zinc-800 dark:bg-zinc-900">
+              <ShieldCheck className="h-3.5 w-3.5 shrink-0" />
+              <span>
+                Démonstration publique · jeu de données et modèle imposés · 1 essai
+                par visiteur et par jour · aucune donnée conservée
+              </span>
+            </div>
+          )}
+          <div className="shrink-0 overflow-x-hidden">
+            <BackendDownBanner />
+          </div>
           <Breadcrumb />
-          <main className="min-w-0 flex-1 overflow-y-auto px-6 pt-6 pb-6">
+          {/* pb-24 : réserve la place du pied flottant pour que le dernier
+              contenu se dégage de la barre une fois entièrement déroulé. */}
+          <main className="min-w-0 flex-1 overflow-y-auto px-6 pt-6 pb-24">
             <div className="mx-auto max-w-6xl">
               {step === "upload" && <StepUpload />}
               {step === "audit" && <StepAudit />}
-              {step === "classement" && <StepClassement />}
+              {step === "classement" && <StepClassement key={currentStem} />}
             </div>
           </main>
+          {/* Pied d'actions : superposé en bas de la colonne (pleine largeur),
+              le contenu défile dessous → l'effet verre dépoli est visible. Les
+              étapes y injectent leurs CTA via <StepActions> (portail). Vide →
+              invisible. */}
+          <div
+            id={STEP_ACTIONS_FOOTER_ID}
+            className="pointer-events-none absolute inset-x-0 bottom-0 z-20 overflow-x-hidden *:pointer-events-auto"
+          />
         </div>
       </div>
 
       <SettingsModal />
+      <AgentModal open={agentModalOpen} onOpenChange={setAgentModalOpen} />
     </div>
+    <PrintReport />
+    </>
   );
 }
 

@@ -24,14 +24,14 @@ export type DirectiveFolderOption = { tech: string; label: string };
 const FONDS = "__fonds__";
 
 /**
- * Panneau des **consignes de classement de l'archiviste**. L'archiviste pose des
- * préconisations ancrées à un dossier du plan ou au niveau du fonds ; une
- * consigne peut **autoriser la création de sous-dossiers** sous le dossier visé.
- * Les consignes ne modifient pas le plan et sont réutilisées à chaque relance du
- * classement.
+ * Panneau des **consignes de classement de l'archiviste**. L'archiviste
+ * pose des préconisations ancrées à un dossier du plan ou au niveau du fonds ;
+ * une consigne peut **autoriser la création de sous-dossiers** sous le dossier
+ * visé. Les consignes ne modifient pas le plan (fin du détournement en faux
+ * dossier), sont réutilisées à chaque relance du classement.
  *
- * Présentation pure : la sérialisation en bloc de prompt et la dérivation des
- * dossiers à création autorisée vivent dans le moteur (`core.cla_directives`).
+ * Présentation pure : la sérialisation en bloc de prompt et la dérivation
+ * des dossiers à création autorisée vivent dans le moteur (`core.cla_directives`).
  * Ce composant ne fait que collecter la liste et la remonter via `onChange`.
  */
 export function DirectivesPanel({
@@ -67,7 +67,8 @@ export function DirectivesPanel({
     setFolder(FONDS);
   };
 
-  const remove = (i: number) => onChange(directives.filter((_, k) => k !== i));
+  const remove = (i: number) =>
+    onChange(directives.filter((_, k) => k !== i));
 
   return (
     <div className="space-y-4" id="directives-panel">

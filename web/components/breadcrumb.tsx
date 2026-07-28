@@ -1,12 +1,7 @@
 "use client";
 
 import { useWizard, type WizardStep } from "@/lib/store";
-
-const STEPS: { id: WizardStep; label: string }[] = [
-  { id: "upload", label: "Étape 1 - Import CSV" },
-  { id: "audit", label: "Étape 2 - Audit" },
-  { id: "classement", label: "Étape 3 - Classement" },
-];
+import { useT } from "@/lib/i18n";
 
 const ORDER: Record<WizardStep, number> = {
   upload: 1,
@@ -15,10 +10,17 @@ const ORDER: Record<WizardStep, number> = {
 };
 
 export function Breadcrumb() {
+  const t = useT();
   const step = useWizard((s) => s.step);
   const csvOriginal = useWizard((s) => s.csvOriginal);
   const planValide = useWizard((s) => s.planValide);
   const setStep = useWizard((s) => s.setStep);
+
+  const STEPS: { id: WizardStep; label: string }[] = [
+    { id: "upload", label: t.breadcrumb.upload },
+    { id: "audit", label: t.breadcrumb.audit },
+    { id: "classement", label: t.breadcrumb.classement },
+  ];
 
   const canNavigate = (target: WizardStep) => {
     if (target === "upload") return true;
@@ -28,7 +30,7 @@ export function Breadcrumb() {
   };
 
   return (
-    <nav className="odacea-breadcrumb px-6" aria-label="Étapes du wizard">
+    <nav className="odacea-breadcrumb px-6" aria-label={t.breadcrumb.aria}>
       {STEPS.map((s, i) => {
         const currentIdx = ORDER[step];
         const sIdx = ORDER[s.id];

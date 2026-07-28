@@ -5,6 +5,7 @@ import { useWizard } from "@/lib/store";
 import {
   applyPreview,
   applyClassement,
+  formatApiError,
   type ApplyPreview,
   type ApplyStats,
 } from "@/lib/llm/client-stream";
@@ -24,16 +25,16 @@ import {
 
 type LiveProgress = { copied: number; total: number; current: string };
 
-const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
-
 /**
  * Application physique du classement (backend local uniquement).
  *
  * Copie chaque fichier du SIP produit vers une **arborescence cible distincte**,
- * l'original conservé intact. Transport pur : le panneau envoie les lignes RESIP
- * (`csvFinal.rows`) + deux chemins ; l'aperçu, les garde-fous et la copie vivent
- * dans le moteur (`core/apply_classement.py`). Deux temps : **aperçu obligatoire**
- * puis **application confirmée** avec progression.
+ * l'original conservé intact. Transport pur : le panneau envoie les lignes
+ * RESIP (`csvFinal.rows`) + deux chemins ; l'aperçu, les garde-fous et
+ * la copie vivent dans le moteur (`core/apply_classement.py`). Deux temps :
+ * **aperçu obligatoire** puis **application confirmée** avec progression.
+ *
+ * Masqué en mode démonstration (l'endpoint est refusé côté serveur).
  */
 export function ApplyPanel({ rows }: { rows: Record<string, unknown>[] }) {
   const { sourceRoot, setSourceRoot } = useWizard();
@@ -58,7 +59,7 @@ export function ApplyPanel({ rows }: { rows: Record<string, unknown>[] }) {
       const p = await applyPreview(rows, sourceRoot.trim(), targetRoot.trim(), resume);
       setPreview(p);
     } catch (err) {
-      setError(errMsg(err));
+      setError(formatApiError(err));
     } finally {
       setPreviewing(false);
     }
@@ -89,13 +90,13 @@ export function ApplyPanel({ rows }: { rows: Record<string, unknown>[] }) {
               });
             }
           },
-          onError: (e) => setError(errMsg(e)),
+          onError: (e) => setError(formatApiError(e)),
         },
       );
       const done = res.done as { stats?: ApplyStats } | null;
       if (done?.stats) setStats(done.stats);
     } catch (err) {
-      setError(errMsg(err));
+      setError(formatApiError(err));
     } finally {
       setApplying(false);
       setProgress(null);
@@ -203,6 +204,7 @@ export function ApplyPanel({ rows }: { rows: Record<string, unknown>[] }) {
         )}
       </div>
 
+      {/* Progression de la copie. */}
       {progress && (
         <div className="space-y-1">
           <div className="h-2 w-full overflow-hidden rounded-full bg-(--ink-100)">
@@ -228,6 +230,7 @@ export function ApplyPanel({ rows }: { rows: Record<string, unknown>[] }) {
         </Alert>
       )}
 
+      {/* Aperçu — garde-fou cible ou synthèse du plan de copie. */}
       {preview && preview.targetGuard && (
         <Alert variant="destructive">
           <ShieldCheck className="h-4 w-4" />
@@ -269,6 +272,7 @@ export function ApplyPanel({ rows }: { rows: Record<string, unknown>[] }) {
         </Alert>
       )}
 
+      {/* Résultat final. */}
       {stats && (
         <Alert variant={stats.failed > 0 ? "destructive" : "success"}>
           <CheckCircle2 />

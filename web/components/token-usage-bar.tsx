@@ -26,14 +26,19 @@ export function TokenUsageBar({
   usage,
   durationMs,
   label,
+  model,
 }: {
   usage: LlmUsage | null | undefined;
   durationMs?: number | null;
   label?: string;
+  /** Modèle ayant exécuté l'étape — figé à l'exécution (traçabilité). Affiché
+   *  même quand un serveur local n'expose ni tokens ni durée. */
+  model?: string | null;
 }) {
   const hasTokens = !!usage?.totalTokens;
   const hasDuration = !!durationMs && durationMs > 0;
-  if (!hasTokens && !hasDuration) return null;
+  const hasModel = !!model;
+  if (!hasTokens && !hasDuration && !hasModel) return null;
 
   const parts: string[] = [];
   if (hasTokens) {
@@ -59,6 +64,12 @@ export function TokenUsageBar({
       )}
       {hasTokens && hasDuration && (
         <>. Traité en <span className="font-medium text-(--ink-500)">{formatDuration(durationMs!)}</span></>
+      )}
+      {hasModel && (
+        <>
+          {(hasTokens || hasDuration) && " · "}
+          modèle : <span className="font-medium text-(--ink-500)">{model}</span>
+        </>
       )}
     </p>
   );

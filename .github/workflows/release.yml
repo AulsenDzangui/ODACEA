@@ -1,0 +1,99 @@
+# Release ODACEA — déclenchée par la pose d'un tag
+# semver `vX.Y.Z`. Produit les artefacts de release :
+#   - wheel + sdist de la CLI/moteur (`python -m build`) ;
+#   - images Docker `backend` et `web` poussées vers le GitHub Container Registry
+#     (ghcr.io), taguées par la version et `latest`.
+# La cohérence de version (tag vs fichiers du dépôt) est vérifiée en préalable —
+# un tag qui ne correspond pas aux fichiers de version échoue la release.
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write   # créer la GitHub Release + y attacher les artefacts
+  packages: write   # pousser les images vers ghcr.io
+
+jobs:
+  # ── Garde-fou : le tag doit correspondre à la version du dépôt ──────────────
+  verify-version:
+    name: Cohérence de version (tag vs dépôt)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Les trois fichiers de version concordent
+        run: python scripts/bump_version.py --check
+      - name: Le tag `vX.Y.Z` correspond à la version du dépôt
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          repo="$(python scripts/bump_version.py)"
+          echo "tag=$tag  dépôt=$repo"
+          test "$tag" = "$repo"
+
+  # ── Wheel CLI + sdist ───────────────────────────────────────────────────────
+  wheel:
+    name: Artefact — wheel CLI (python -m build)
+    needs: verify-version
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Installer build
+        run: pip install build
+      - name: Construire le wheel et le sdist
+        run: python -m build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: odacea-dist
+          path: backend/dist/*
+          retention-days: 30
+      - name: Attacher à la GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: backend/dist/*
+
+  # ── Images Docker (backend + web) → ghcr.io ─────────────────────────────────
+  images:
+    name: Artefact — images Docker (ghcr.io)
+    needs: verify-version
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - service: backend
+            context: ./backend
+          - service: web
+            context: ./web
+    steps:
+      - uses: actions/checkout@v4
+      - name: Connexion à ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Métadonnées (tags version + latest)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}/${{ matrix.service }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=raw,value=latest
+      - name: Build et push
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}

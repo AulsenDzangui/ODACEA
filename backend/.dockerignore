@@ -1,0 +1,20 @@
+# Hors image : on ne copie que le moteur et ses interfaces.
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+tests/
+conftest.py
+.env
+.venv/
+venv/
+evals/results/
+*.csv
+!demo_assets/*.csv
+odacea.toml
+*.egg-info/
+build/
+dist/

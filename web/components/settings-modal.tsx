@@ -6,7 +6,9 @@ import { useWizard } from "@/lib/store";
 import {
   DEFAULT_CLOUD_MODELS,
   DEFAULT_LOCAL_ENDPOINTS,
+  DEMO_MODE,
 } from "@/lib/llm/config";
+import { MAX_CLASSEMENT_CONCURRENCY } from "@/lib/csv/batch-schedule";
 import {
   Dialog,
   DialogContent,
@@ -19,11 +21,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+import { InfoTip } from "@/components/ui/info-tip";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Select,
@@ -51,7 +49,8 @@ import {
   Palette,
   FileDown,
   ListTree,
-  Info,
+  Hash,
+  ShieldAlert,
   type LucideIcon,
 } from "lucide-react";
 import { useThemeStore, type Theme } from "@/lib/theme-store";
@@ -60,7 +59,7 @@ const CUSTOM_MODEL_OPTION = "__custom__";
 
 type SettingsSection = "model" | "tokens" | "batch" | "export" | "display";
 
-const SECTIONS: {
+const ALL_SECTIONS: {
   id: SettingsSection;
   label: string;
   icon: LucideIcon;
@@ -71,6 +70,12 @@ const SECTIONS: {
   { id: "export", label: "Export", icon: FileDown },
   { id: "display", label: "Affichage", icon: Palette },
 ];
+
+// En démonstration, le modèle, la clé et le découpage en lots sont imposés par le
+// serveur : on masque les sections correspondantes.
+const SECTIONS = DEMO_MODE
+  ? ALL_SECTIONS.filter((s) => s.id !== "model" && s.id !== "batch")
+  : ALL_SECTIONS;
 
 const THEME_OPTIONS: { id: Theme; label: string; icon: LucideIcon }[] = [
   { id: "light", label: "Clair", icon: Sun },
@@ -87,24 +92,28 @@ export function SettingsModal() {
     cloudModel,
     localEndpoint,
     localModel,
+    rememberApiKey,
     tokenOptions,
     exportOptions,
     classementBatchSize,
+    classementConcurrency,
     setProviderMode,
     setCloudModel,
     setLocalEndpoint,
     setLocalModel,
     setApiKey,
+    setRememberApiKey,
     setTokenOptions,
     setExportOptions,
     setClassementBatchSize,
+    setClassementConcurrency,
     settingsModalOpen,
     setSettingsModalOpen,
   } = useWizard();
 
   const { theme, setTheme } = useThemeStore();
 
-  const [section, setSection] = useState<SettingsSection>("model");
+  const [section, setSection] = useState<SettingsSection>(SECTIONS[0].id);
   const [showKey, setShowKey] = useState(false);
   const [testStatus, setTestStatus] = useState<
     "idle" | "loading" | "ok" | "error"
@@ -166,6 +175,36 @@ export function SettingsModal() {
         </button>
       </div>
       {helper && <p className="text-xs text-(--ink-500)">{helper}</p>}
+
+      {/* Mémorisation de la clé explicite et désactivée par défaut. Sans
+          opt-in, la clé reste en mémoire pour la session et n'est jamais écrite
+          dans le navigateur. */}
+      <div className="rounded-md border border-(--ink-200) bg-(--ink-100)/40 p-3 space-y-2">
+        <div className="flex items-center justify-between gap-3">
+          <Label htmlFor={`${id}-remember`} className="text-sm font-normal">
+            Mémoriser la clé sur cet appareil
+          </Label>
+          <Switch
+            id={`${id}-remember`}
+            checked={rememberApiKey}
+            onCheckedChange={setRememberApiKey}
+          />
+        </div>
+        <p className="flex items-start gap-1.5 text-xs text-(--ink-500)">
+          <ShieldAlert
+            className={cn(
+              "mt-0.5 h-3.5 w-3.5 shrink-0",
+              rememberApiKey ? "text-(--warning-500)" : "text-(--ink-400)",
+            )}
+            aria-hidden
+          />
+          <span>
+            {rememberApiKey
+              ? "Enregistrée en clair dans le stockage local de ce navigateur — à éviter sur un poste partagé."
+              : "Conservée uniquement pour cette session : oubliée au rechargement de la page et à la fermeture de l'onglet."}
+          </span>
+        </p>
+      </div>
     </div>
   );
 
@@ -378,18 +417,27 @@ export function SettingsModal() {
             {/* Préparation du CSV envoyé à AUD-001. Ces Paramètres prennent
                 effet au (re)lancement de l'audit. */}
             {section === "tokens" && (
-              <section className="space-y-3">
+              <section className="space-y-5">
                 <header className="space-y-1">
-                  <h2 className="flex items-center gap-2 font-heading text-base font-medium text-(--ink-900)">
-                    Optimisation des tokens
-                    <span className="rounded bg-(--ink-100) px-1.5 py-0.5 text-xs font-normal text-(--ink-500)">
-                      audit
-                    </span>
+                  <h2 className="font-heading text-base font-medium text-(--ink-900)">
+                    Optimisation
                   </h2>
                   <p className="text-sm text-(--ink-500)">
-                    Réduisent la taille du CSV envoyé à l&apos;audit (AUD-001).
+                    Arbitrages coût / richesse du traitement, par étape.
                   </p>
                 </header>
+
+                {/* ── Audit : réduction du CSV envoyé à AUD-001 ───────────── */}
+                <div className="space-y-3">
+                  <h3 className="flex items-center gap-2 text-sm font-medium text-(--ink-700)">
+                    Audit
+                    <span className="rounded bg-(--ink-100) px-1.5 py-0.5 text-xs font-normal text-(--ink-500)">
+                      AUD-001
+                    </span>
+                  </h3>
+                  <p className="text-xs text-(--ink-500)">
+                    Réduisent la taille du CSV envoyé à l&apos;audit.
+                  </p>
 
                 <div className="flex items-center justify-between">
                   <Label htmlFor="filter" className="text-sm">
@@ -413,16 +461,6 @@ export function SettingsModal() {
                     onCheckedChange={(v) => setTokenOptions({ cleanDates: v })}
                   />
                 </div>
-                <div className="flex items-center justify-between">
-                  <Label htmlFor="sample" className="text-sm">
-                    Échantillonner les fichiers
-                  </Label>
-                  <Switch
-                    id="sample"
-                    checked={tokenOptions.sampleItems}
-                    onCheckedChange={(v) => setTokenOptions({ sampleItems: v })}
-                  />
-                </div>
                 {/* Mesures automatiques — chiffres exacts (volumétrie, formats)
                     calculés par le moteur et fournis à l'IA comme référence, pour
                     fiabiliser ses comptes. L'analyse (doublons, nommage, bruit)
@@ -433,23 +471,12 @@ export function SettingsModal() {
                     className="flex items-center gap-1.5 text-sm"
                   >
                     Mesures automatiques
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <button
-                          type="button"
-                          aria-label="À propos des mesures automatiques"
-                          className="inline-flex text-(--ink-400) hover:text-(--ink-600) focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-                        >
-                          <Info className="h-3.5 w-3.5" />
-                        </button>
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        Calcule automatiquement la volumétrie et les formats du
-                        vrac et les fournit à l&apos;IA, pour fiabiliser ses
-                        chiffres. L&apos;analyse (doublons, nommage…) reste faite
-                        par l&apos;IA.
-                      </TooltipContent>
-                    </Tooltip>
+                    <InfoTip label="À propos des mesures automatiques">
+                      Calcule automatiquement la volumétrie et les formats du
+                      vrac et les fournit à l&apos;IA, pour fiabiliser ses
+                      chiffres. L&apos;analyse (doublons, nommage…) reste faite
+                      par l&apos;IA.
+                    </InfoTip>
                   </Label>
                   <Switch
                     id="autoMeasures"
@@ -457,28 +484,6 @@ export function SettingsModal() {
                     onCheckedChange={(v) => setTokenOptions({ autoMeasures: v })}
                   />
                 </div>
-                {tokenOptions.sampleItems && (
-                  <div className="space-y-1">
-                    <Label htmlFor="sampleN" className="text-xs">
-                      Max Items / dossier
-                    </Label>
-                    <Input
-                      id="sampleN"
-                      type="number"
-                      min={1}
-                      max={50}
-                      value={tokenOptions.sampleItemsN}
-                      onChange={(e) =>
-                        setTokenOptions({
-                          sampleItemsN: Math.max(
-                            1,
-                            parseInt(e.target.value, 10) || 1,
-                          ),
-                        })
-                      }
-                    />
-                  </div>
-                )}
                 {/* Inclure la description — réglé ici (étape audit) mais appliqué
                 aussi au classement via l'état persistant. Verrouillé sur
                 « inclus » quand le filtrage des colonnes est désactivé (la
@@ -498,6 +503,147 @@ export function SettingsModal() {
                       setTokenOptions({ includeDescription: v })
                     }
                   />
+                </div>
+
+                {/* ── Fichiers envoyés à l'audit ────────────────────────────
+                    Regroupe l'échantillonnage (interrupteur + nombre) et
+                    l'option « arborescence seule », mutuellement exclusifs :
+                    n'envoyer que la structure du fonds désactive
+                    l'échantillonnage (aucun fichier n'est transmis). Sans effet
+                    sur le classement, qui traite toujours tous les fichiers. */}
+                <div className="space-y-3 rounded-md border border-(--ink-200) bg-(--ink-100)/40 p-3">
+                  <p className="text-xs font-medium text-(--ink-600)">
+                    Fichiers envoyés à l&apos;audit
+                  </p>
+                  <div className="flex items-center justify-between gap-2">
+                    <Label
+                      htmlFor="sample"
+                      className={`text-sm ${tokenOptions.foldersOnly ? "text-(--ink-400)" : ""}`}
+                    >
+                      Échantillonner les fichiers
+                    </Label>
+                    <Switch
+                      id="sample"
+                      checked={
+                        tokenOptions.sampleItems && !tokenOptions.foldersOnly
+                      }
+                      disabled={tokenOptions.foldersOnly}
+                      onCheckedChange={(v) =>
+                        setTokenOptions({ sampleItems: v })
+                      }
+                    />
+                  </div>
+                  {tokenOptions.sampleItems && !tokenOptions.foldersOnly && (
+                    <div className="space-y-1">
+                      <Label htmlFor="sampleN" className="text-xs">
+                        Max fichiers / dossier
+                      </Label>
+                      <Input
+                        id="sampleN"
+                        type="number"
+                        min={1}
+                        max={50}
+                        value={tokenOptions.sampleItemsN}
+                        onChange={(e) =>
+                          setTokenOptions({
+                            sampleItemsN: Math.max(
+                              1,
+                              parseInt(e.target.value, 10) || 1,
+                            ),
+                          })
+                        }
+                      />
+                    </div>
+                  )}
+                  {/* Arborescence seule : n'envoyer que les dossiers, aucun
+                      fichier. Prime sur l'échantillonnage (contrat moteur
+                      includeItems = false). */}
+                  <div className="flex items-center justify-between gap-2">
+                    <Label
+                      htmlFor="foldersOnly"
+                      className="flex items-center gap-1.5 text-sm"
+                    >
+                      Arborescence seule (aucun fichier)
+                      <InfoTip label="À propos de l'arborescence seule">
+                        N&apos;envoie que les dossiers à l&apos;audit, sans aucun
+                        fichier — utile pour ne soumettre que la structure du
+                        fonds. Le classement, lui, traite toujours tous les
+                        fichiers.
+                      </InfoTip>
+                    </Label>
+                    <Switch
+                      id="foldersOnly"
+                      checked={tokenOptions.foldersOnly}
+                      onCheckedChange={(v) =>
+                        setTokenOptions({ foldersOnly: v })
+                      }
+                    />
+                  </div>
+                </div>
+                </div>
+
+                {/* ── Classement : démarche de l'IA (CLA-001) ─────────────── */}
+                <div className="space-y-3">
+                  <h3 className="flex items-center gap-2 text-sm font-medium text-(--ink-700)">
+                    Classement
+                    <span className="rounded bg-(--ink-100) px-1.5 py-0.5 text-xs font-normal text-(--ink-500)">
+                      CLA-001
+                    </span>
+                  </h3>
+
+                  {/* Inclut/retire le bloc « Avis de classement » du prompt
+                      CLA-001. Désactivé : pas de prose « Démarche de l'IA »,
+                      moins de tokens de sortie (utile sur gros vracs en lots, où
+                      seul l'avis du premier lot est affiché). */}
+                  <div className="flex items-center justify-between gap-2">
+                    <Label
+                      htmlFor="classementAvis"
+                      className="flex items-center gap-1.5 text-sm"
+                    >
+                      Demander l&apos;avis de classement
+                      <InfoTip label="À propos de l'avis de classement">
+                        Le modèle rédige, avant le CSV, une courte prose (la
+                        « Démarche de l&apos;IA ») : pertinence du plan, choix
+                        notables, dossiers non remplis. Désactivez pour
+                        l&apos;omettre et réduire le nombre de tokens de sortie.
+                      </InfoTip>
+                    </Label>
+                    <Switch
+                      id="classementAvis"
+                      checked={tokenOptions.classementAvis}
+                      onCheckedChange={(v) =>
+                        setTokenOptions({ classementAvis: v })
+                      }
+                    />
+                  </div>
+
+                  {/* Méthode d'identifiant : « Path » (défaut, le modèle recopie
+                      le chemin complet → ancrage fort, meilleure finesse mais
+                      sortie plus lente) vs « Ref » (identifiant court → sortie
+                      rapide, ancrage moindre). Outil-laboratoire : à comparer. */}
+                  <div className="flex items-center justify-between gap-2">
+                    <Label
+                      htmlFor="classementRef"
+                      className="flex items-center gap-1.5 text-sm"
+                    >
+                      Identifiant court (Ref)
+                      <InfoTip label="À propos de la méthode d'identifiant">
+                        Active : le modèle recopie un identifiant court au lieu
+                        du chemin complet en sortie — génération plus rapide,
+                        mais l&apos;ancrage moindre peut réduire la finesse du
+                        classement (dossiers laissés vides) sur petits modèles.
+                        Désactivé (défaut) : méthode « Path », recopie du chemin
+                        complet (plus lente, plus précise).
+                      </InfoTip>
+                    </Label>
+                    <Switch
+                      id="classementRef"
+                      checked={tokenOptions.classementRef}
+                      onCheckedChange={(v) =>
+                        setTokenOptions({ classementRef: v })
+                      }
+                    />
+                  </div>
                 </div>
               </section>
             )}
@@ -542,6 +688,43 @@ export function SettingsModal() {
                     </p>
                   )}
                 </div>
+
+                {/* ── Lots en parallèle ─────────────────────────────────
+                    Au-dessus du seuil, plusieurs lots CLA-001 peuvent être
+                    envoyés simultanément (cloud). Forcé à 1 pour un serveur
+                    local (mono-requête) — miroir du CLI `--concurrency`. */}
+                <div className="space-y-1">
+                  <Label htmlFor="concurrency" className="text-xs">
+                    Lots traités en parallèle
+                  </Label>
+                  <Input
+                    id="concurrency"
+                    type="number"
+                    min={1}
+                    max={MAX_CLASSEMENT_CONCURRENCY}
+                    disabled={providerMode === "local"}
+                    value={
+                      providerMode === "local" ? 1 : classementConcurrency
+                    }
+                    onChange={(e) => {
+                      const v = parseInt(e.target.value, 10);
+                      setClassementConcurrency(isNaN(v) ? 1 : v);
+                    }}
+                    onBlur={() => {
+                      const clamped = Math.min(
+                        MAX_CLASSEMENT_CONCURRENCY,
+                        Math.max(1, classementConcurrency),
+                      );
+                      if (clamped !== classementConcurrency)
+                        setClassementConcurrency(clamped);
+                    }}
+                  />
+                  <p className="text-xs text-(--ink-500)">
+                    {providerMode === "local"
+                      ? "Forcé à 1 : un serveur local traite une seule requête à la fois."
+                      : `Séquentiel par défaut (1). Jusqu'à ${MAX_CLASSEMENT_CONCURRENCY} appels simultanés sur un fournisseur cloud, uniquement en mode lots.`}
+                  </p>
+                </div>
               </section>
             )}
 
@@ -559,9 +742,10 @@ export function SettingsModal() {
                     </span>
                   </h2>
                   <p className="text-sm text-(--ink-500)">
-                    Mise en forme des titres dans le CSV final. Ces réglages
-                    s&apos;appliquent au téléchargement, sans relancer le
-                    classement.
+                    Mise en forme du CSV final, du manifeste et de la copie
+                    physique. Les deux réglages de titre s&apos;appliquent au
+                    téléchargement ; le retrait des numéros recalcule le
+                    classement (sans nouvel appel à l&apos;IA).
                   </p>
                 </header>
 
@@ -573,24 +757,13 @@ export function SettingsModal() {
                   >
                     <ListTree className="h-3.5 w-3.5" />
                     Appliquer le titre technique des dossiers
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <button
-                          type="button"
-                          aria-label="À propos du titre technique des dossiers"
-                          className="inline-flex text-(--ink-400) hover:text-(--ink-600) focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-                        >
-                          <Info className="h-3.5 w-3.5" />
-                        </button>
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        Par défaut, le Content.Title des dossiers reprend le
-                        titre hiérarchique (ex. Inscriptions effectifs), adapté
-                        à un SAE SEDA. Activez pour utiliser le nom technique du
-                        champ File (ex. 1-1_Inscriptions_effectifs), plus
-                        pratique pour un export sur disque.
-                      </TooltipContent>
-                    </Tooltip>
+                    <InfoTip label="À propos du titre technique des dossiers">
+                      Par défaut, le Content.Title des dossiers reprend le
+                      titre hiérarchique (ex. Inscriptions effectifs), adapté
+                      à un SAE SEDA. Activez pour utiliser le nom technique du
+                      champ File (ex. 1-1_Inscriptions_effectifs), plus
+                      pratique pour un export sur disque.
+                    </InfoTip>
                   </Label>
                   <Switch
                     id="folder-title-from-file"
@@ -609,29 +782,48 @@ export function SettingsModal() {
                   >
                     <FileDown className="h-3.5 w-3.5" />
                     Conserver le titre d&apos;origine des fichiers
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <button
-                          type="button"
-                          aria-label="À propos du titre d'origine des fichiers"
-                          className="inline-flex text-(--ink-400) hover:text-(--ink-600) focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-                        >
-                          <Info className="h-3.5 w-3.5" />
-                        </button>
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        Par défaut, le Content.Title des fichiers reprend le nom
-                        proposé par l&apos;IA au classement. Activez pour
-                        rétablir le titre d&apos;origine du CSV importé sans
-                        impact sur les autres éléments (dossiers, dates).
-                      </TooltipContent>
-                    </Tooltip>
+                    <InfoTip label="À propos du titre d'origine des fichiers">
+                      Par défaut, le Content.Title des fichiers reprend le nom
+                      proposé par l&apos;IA au classement. Activez pour
+                      rétablir le titre d&apos;origine du CSV importé sans
+                      impact sur les autres éléments (dossiers, dates).
+                    </InfoTip>
                   </Label>
                   <Switch
                     id="keep-original-file-title"
                     checked={exportOptions.keepOriginalFileTitle}
                     onCheckedChange={(v) =>
                       setExportOptions({ keepOriginalFileTitle: v })
+                    }
+                  />
+                </div>
+
+                {/* Retrait des numéros de position des noms de dossier. Distinct
+                    des deux ci-dessus : touche la colonne File (structure), donc
+                    appliqué côté moteur au finalize — une bascule re-finalise (le
+                    wizard réagit au changement). D'où sa place à la fin du groupe. */}
+                <div className="flex items-center justify-between gap-2">
+                  <Label
+                    htmlFor="strip-folder-numbers"
+                    className="flex items-center gap-1.5 text-sm"
+                  >
+                    <Hash className="h-3.5 w-3.5" />
+                    Retirer les numéros des dossiers
+                    <InfoTip label="À propos du retrait des numéros de dossier">
+                      Par défaut, les dossiers portent un préfixe de position
+                      (1_Administratif, 1-1_Courriers) qui les ordonne. Activez
+                      pour exporter sans (Administratif, Courriers) — dans le
+                      CSV, le manifeste et la copie physique. Les dossiers se
+                      trient alors alphabétiquement, plus dans l&apos;ordre 1,
+                      2, 3… Ce réglage recalcule le classement déjà produit (sans
+                      nouvel appel à l&apos;IA).
+                    </InfoTip>
+                  </Label>
+                  <Switch
+                    id="strip-folder-numbers"
+                    checked={exportOptions.stripFolderNumbers}
+                    onCheckedChange={(v) =>
+                      setExportOptions({ stripFolderNumbers: v })
                     }
                   />
                 </div>

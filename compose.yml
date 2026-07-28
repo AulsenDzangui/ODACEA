@@ -1,0 +1,64 @@
+# ODACEA — déploiement on-prem de référence.
+#
+# Une archive départementale installe ODACEA sans npm ni pip :
+#
+#   docker compose up -d --build
+#   # → front sur http://localhost:9000, parlant au backend interne (backend:8000)
+#
+# Mode par défaut : INSTITUTIONNEL (DEMO_MODE=0). Le modèle, la clé API et le
+# point d'accès local sont saisis dans l'UI (Paramètres → Modèle & connexion) et
+# transmis à chaque requête — le backend est sans état, rien n'est persisté côté
+# serveur. Pour un modèle local (Ollama/LM Studio) tournant sur l'HÔTE, pointer
+# le « point d'accès local » de l'UI vers http://host.docker.internal:11434/v1
+# (Ollama) — le service backend résout cet hôte (extra_hosts ci-dessous).
+#
+# Toutes les variables ont des défauts ; un fichier .env optionnel (cf.
+# .env.compose.example) les surcharge. Voir docs/INSTALLATION_ONPREM.md.
+
+name: odacea
+
+services:
+  # ── Backend : moteur FastAPI ───────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+    image: odacea-backend:local
+    environment:
+      # Modèle proposé par défaut au démarrage de l'UI (surchargeable dans l'UI).
+      DEFAULT_MODEL: ${DEFAULT_MODEL:-ollama/qwen2.5:14b}
+      # CORS : le navigateur ne parle qu'au front (proxy same-origin), donc vide.
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
+      # Mode démonstration désactivé pour une installation institutionnelle.
+      DEMO_MODE: ${DEMO_MODE:-0}
+      # Limites d'entrée — ajustables selon la volumétrie des fonds.
+      ODACEA_MAX_CSV_MB: ${ODACEA_MAX_CSV_MB:-20}
+      ODACEA_MAX_CSV_ROWS: ${ODACEA_MAX_CSV_ROWS:-50000}
+      # Clés cloud OPTIONNELLES (sinon saisies dans l'UI, jamais persistées).
+      # Laisser vide pour un déploiement 100 % local (Ollama/LM Studio).
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+    # Joignable seulement par le service web sur le réseau interne du compose.
+    expose:
+      - "8000"
+    # Permet au backend d'atteindre un Ollama/LM Studio tournant sur l'hôte.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  # ── Front : Next.js (présentation + proxy /api/py/*) ───────────────────────
+  web:
+    build:
+      context: ./web
+    image: odacea-web:local
+    environment:
+      # Le proxy front (route handler) relaie vers le backend interne.
+      ODACEA_API_URL: http://backend:8000
+      NEXT_PUBLIC_DEMO_MODE: ${NEXT_PUBLIC_DEMO_MODE:-0}
+      # Secret de proxy (utile seulement en mode démo public) — vide ici.
+      DEMO_PROXY_SECRET: ${DEMO_PROXY_SECRET:-}
+    ports:
+      - "${ODACEA_WEB_PORT:-9000}:9000"
+    depends_on:
+      - backend
+    restart: unless-stopped

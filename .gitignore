@@ -36,3 +36,22 @@ Thumbs.db
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# testing
+/coverage
+/.playwright-mcp
+/test_cli_output
+
+# Outils de collaboration IA
+CLAUDE.md
+GEMINI.md
+AGENTS.md
+.claude/
+.cursor/
+.cursorrules
+.aider*
+.github/copilot-instructions.md
+
+# Couverture pytest (générée)
+.coverage
+coverage.xml

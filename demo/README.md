@@ -17,9 +17,9 @@ besoin pour produire un CSV SEDA exploitable.
 
 | Palier | Script | Fichiers | Dossiers | Modèles cibles |
 |---|---|---|---|---|
-| **Petit** | `generate_demo_tree_small.py` | 82 | 32 | 14B local (Qwen, Mistral, Llama) |
-| **Moyen** | `generate_demo_tree.py` | 184 | 40 | 13–30B (Qwen 14B, Mixtral, Llama 70B quantizé) |
-| **Grand** | `generate_demo_tree_large.py` | 604 | 72 | Cloud (Claude Opus/Sonnet, GPT-4/5, Gemini Pro) |
+| **Petit** | `generate_demo_tree_small.py` | 82 | 32 | petit jeu, idéal modèle local compact |
+| **Moyen** | `generate_demo_tree.py` | 184 | 40 | jeu moyen |
+| **Grand** | `generate_demo_tree_large.py` | 604 | 72 | grand jeu, plutôt grand modèle / cloud |
 
 Chaque palier génère son propre dossier sous `demo_data/` ; les trois
 peuvent coexister sans s'écraser.
@@ -46,10 +46,9 @@ localement, le repo ne porte que les scripts.
 
 ### Petit (82 fichiers) : pour développer et valider les prompts
 
-Conformément à la philosophie du projet (« le petit modèle comme outil de
-validation »), c'est sur ce palier
-qu'on **valide la robustesse d'un prompt** : un 14B ne pardonne pas les
-ambiguïtés. Si AUD-001 ou CLA-001 réussissent ici, ils réussiront ailleurs.
+C'est le palier le plus pratique pour **valider la robustesse d'un prompt** :
+petit, rapide à itérer, exécutable sur n'importe quelle approche (cloud ou
+locale). Si AUD-001 ou CLA-001 réussissent ici, ils réussiront ailleurs.
 
 À utiliser pour :
 - Tester une modification de prompt

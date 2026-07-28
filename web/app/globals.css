@@ -313,3 +313,38 @@
   }
 
 }
+
+/* ── Export PDF imprimable (D6) ─────────────────────────────────────────────
+   Le rapport imprimable (#odacea-print-root) est masqué à l'écran (.hidden) et
+   révélé en `print:block`. À l'impression, on neutralise la coquille applicative
+   par visibilité (et non display) pour ne pas perturber la mise en page, puis on
+   ré-affiche le seul sous-arbre du rapport, déployé en pleine page. Tout passe
+   en noir sur blanc pour économiser l'encre et garantir la lisibilité. */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  #odacea-print-root,
+  #odacea-print-root * {
+    visibility: visible;
+  }
+  #odacea-print-root {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    color: #000;
+    background: #fff;
+  }
+  #odacea-print-root * {
+    color: #000 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+  /* Ne pas couper un dossier ou une section en travers d'une page. */
+  #odacea-print-root .odacea-print-avoid-break {
+    break-inside: avoid;
+  }
+  @page {
+    margin: 18mm 16mm;
+  }
+}
