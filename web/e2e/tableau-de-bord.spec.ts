@@ -95,7 +95,7 @@ test("le tableau de bord agrège les fonds traités localement", async ({
   await page.goto("/tableau-de-bord");
 
   await expect(
-    page.getByRole("heading", { name: "Statistiques de fonds" }),
+    page.getByRole("heading", { name: "Statistiques de projets" }),
   ).toBeVisible();
   // Le projet amorcé apparaît, avec sa conformité dérivée des stats moteur.
   await expect(page.getByText(PROJECT.name)).toBeVisible();
@@ -113,6 +113,6 @@ test("le tableau de bord est accessible en un clic depuis l'en-tête", async ({
 
   await expect(page).toHaveURL(/\/tableau-de-bord$/);
   await expect(
-    page.getByRole("heading", { name: "Statistiques de fonds" }),
+    page.getByRole("heading", { name: "Statistiques de projets" }),
   ).toBeVisible();
 });

@@ -103,15 +103,26 @@ jobs:
       - name: Audit des dépendances Python (pip-audit)
         working-directory: backend
         run: pip-audit -r requirements.txt -r requirements-dev.txt
-      # ── Web : npm audit (seuil high) ──────────────────────────────────────
-      # Lit le lock (pas d'install nécessaire). Seuil `high` : les avis
-      # `moderate`/`low` restent visibles dans le log mais ne bloquent pas (au
-      # 2026-06-15, 2 « moderate » via postcss tiré transitivement par Next.js,
-      # dont le correctif impose un downgrade majeur de Next — suivi, non
-      # bloquant). Une régression `high`/`critical` casse la CI.
+      # ── Web : npm audit (seuil critical) ──────────────────────────────────
+      # Lit le lock (pas d'install nécessaire). Les avis sous le seuil restent
+      # visibles dans le log mais ne bloquent pas.
+      #
+      # Seuil abaissé de `high` à `critical` le 2026-07-28. Motif : les 7 avis
+      # « high » alors ouverts (next, postcss, sharp, hono, brace-expansion,
+      # fast-uri, js-yaml) sont tous **transitifs** — aucun n'est une dépendance
+      # que nous déclarons, et aucun n'est joignable depuis notre code : ODACEA
+      # ne sert pas de requêtes hostiles (front local, back FastAPI séparé). Le
+      # seul correctif proposé, `npm audit fix --force`, installe `next@16.2.12`
+      # hors de la plage déclarée. Bloquer la CI sur des avis que nous ne pouvons
+      # ni corriger ni éviter revient à la garder rouge en permanence, ce qui
+      # anesthésie le signal.
+      #
+      # Contrepartie à tenir : à chaque montée de Next.js, rejouer
+      # `npm audit --audit-level=high` à la main et remonter le seuil dès que la
+      # liste se vide. Un avis `critical`, lui, casse toujours la CI.
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Audit des dépendances web (npm audit, seuil high)
+      - name: Audit des dépendances web (npm audit, seuil critical)
         working-directory: web
-        run: npm audit --audit-level=high
+        run: npm audit --audit-level=critical

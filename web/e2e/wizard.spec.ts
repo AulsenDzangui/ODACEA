@@ -335,10 +335,9 @@ test("wizard complet : upload → audit → classement → téléchargement", as
   await expect(page.getByText("Coût d'entrée estimé")).toBeVisible();
   await expect(page.getByText(/GPT-5 mini/)).toBeVisible();
   await expect(page.getByText(/< 0,01 €/)).toBeVisible();
-  // La recommandation de budget d'entrée AUD-001 est rendue (réglage courant
-  // « 5/dossier » vs recommandé « tous » pour ce vrac).
-  await expect(page.getByText("Profondeur d'entrée AUD-001")).toBeVisible();
-  await expect(page.getByText(/5\/dossier → tous/)).toBeVisible();
+  // La recommandation de budget d'entrée AUD-001 n'est plus *affichée* : le bloc
+  // a été retiré de l'écran d'import lors de l'allègement du texte. Le calcul
+  // moteur reste couvert côté backend ; rien à asserter ici.
   await page.getByText("Continuer vers l'audit").click();
 
   // ── Étape 2 : audit ───────────────────────────────────────────────────────
@@ -445,8 +444,12 @@ test("Audit comparatif multi-plans : N audits, comparaison, choix", async ({
   await expect(page.getByText("Continuer vers l'audit")).toBeVisible();
   await page.getByText("Continuer vers l'audit").click();
 
-  // Demander 2 propositions à comparer.
-  await page.getByLabel("Propositions de plan à comparer").click();
+  // Demander 2 propositions à comparer. On vise le rôle `combobox` et non
+  // `getByLabel` : la bulle d'aide voisine porte un aria-label qui contient le
+  // libellé du champ, et `getByLabel` (sous-chaîne) résolvait donc deux éléments.
+  await page
+    .getByRole("combobox", { name: /Propositions de plan à comparer/ })
+    .click();
   await page.getByRole("option", { name: "2 propositions à comparer" }).click();
 
   const compareRequest = page.waitForRequest(
@@ -643,7 +646,15 @@ test(" — démo en <3 clics, édition du plan en arbre, reclassement sans LLM",
   await expect(page.getByText("Continuer vers le classement")).toBeEnabled();
 
   // ── le plan est éditable en arbre (champs de saisie, pas de Markdown) ─
-  // L'onglet « Plan de classement » est actif par défaut après l'audit.
+  // L'onglet « Plan de classement » est actif par défaut après l'audit ; sa vue
+  // par défaut est « Visualisation » (arbre en lecture seule), l'éditeur vit
+  // sous « Édition ». Dans l'éditeur, une rangée s'affiche en texte et ne
+  // devient un champ de saisie qu'une fois « Renommer » déclenché.
+  await page.getByRole("tab", { name: "Édition" }).click();
+  await page
+    .getByRole("group", { name: "Actions sur le dossier 2", exact: true })
+    .getByRole("button", { name: "Renommer" })
+    .click();
   const titre2 = page.getByLabel("Titre du dossier 2", { exact: true });
   await expect(titre2).toHaveValue("Restauration scolaire");
   await titre2.fill("Restauration et cantine");
