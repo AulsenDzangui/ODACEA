@@ -12,10 +12,11 @@ requires-python = ">=3.10"
 # Source de vérité des dépendances d'exécution (alignée sur requirements.txt).
 # `pip install -e .` suffit à obtenir un `odacea` fonctionnel (CLI + API).
 dependencies = [
-    # Bornes hautes : litellm ≥ 1.84 exige une compilation Rust faute de roue
-    # universelle ; pandas 3 change des comportements par défaut. Voir les
+    # litellm : plancher à 1.84 (vulnérabilités corrigées) et borne ouverte — les
+    # versions récentes publient des roues jusqu'à cp314. pandas : borne haute par
+    # prudence (pandas 3 change des comportements par défaut). Voir les
     # commentaires de requirements.txt — les deux fichiers doivent rester alignés.
-    "litellm>=1.40.0,<1.84",
+    "litellm>=1.84",
     "pandas>=2.2.0,<3",
     "python-dotenv>=1.0.0",
     "fastapi>=0.110.0",
@@ -79,7 +80,14 @@ ignore = [
 # Adoption progressive : on vérifie le cœur métier (core/) sans imposer
 # l'annotation exhaustive ; les dépendances sans stubs sont tolérées.
 files = ["core"]
-python_version = "3.10"
+# Cible d'**analyse**, alignée sur l'interpréteur réellement utilisé (CI et image
+# Docker en 3.12). À 3.10, mypy refusait de parser les stubs de numpy ≥ 2.5, qui
+# emploient `type X = …` (PEP 695, 3.12+) : un échec de build dû à la *syntaxe
+# d'une dépendance*, pas au code du projet — et `follow_imports = "skip"` n'y
+# change rien, l'erreur survenant au parsing du stub. Le plancher d'**exécution**
+# reste `requires-python = ">=3.10"` ; c'est `ruff` (`target-version = "py310"`)
+# qui garde la compatibilité descendante de notre propre code.
+python_version = "3.12"
 ignore_missing_imports = true
 check_untyped_defs = true
 warn_redundant_casts = true

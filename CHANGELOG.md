@@ -12,6 +12,15 @@ La version courante est portée par trois fichiers tenus synchrones
 
 ## [Non publié]
 
+### Corrigé
+
+- **`litellm` est désormais borné par le bas (`>= 1.84`) et non plus par le
+  haut.** La `0.3.0` plafonnait sous la 1.84 pour contourner un échec
+  d'installation, ce qui figeait le projet sur une version portant des
+  vulnérabilités connues — corrigées justement en 1.84.0. Les versions récentes
+  fournissent un paquet précompilé jusqu'à Python 3.14 : le plancher règle donc
+  à la fois la sécurité et l'installation.
+
 ## [0.3.0] — 2026-07-28
 
 Cette version aligne le dépôt sur la version de travail : le moteur, la ligne de
@@ -91,14 +100,16 @@ sur un poste Windows récent — voir « Corrigé ».
 
 ### Corrigé
 
-- **L'installation échouait entièrement sur un Python récent.** `litellm` était
-  déclaré sans borne haute ; à partir de sa version 1.84 il exige une compilation
-  Rust faute de paquet précompilé universel. Sur Python 3.14 sous Windows,
-  `pip install -r requirements.txt` s'arrêtait donc sur une erreur de
-  compilation — et comme pip résout tout avant d'installer, **aucune dépendance
-  n'était installée** : le backend était inutilisable. Les bornes hautes
-  (`litellm<1.84`, `pandas<3` par prudence) rétablissent une installation en
-  paquets précompilés, sans Rust.
+- **L'installation échouait entièrement sur un Python récent.** `litellm` a gagné
+  en cours de série une extension native, et certaines de ses versions ne
+  publiaient pas de paquet précompilé pour Python 3.14 : sous Windows,
+  `pip install -r requirements.txt` basculait alors sur une compilation qui
+  échouait faute d'outillage — et comme pip résout tout avant d'installer,
+  **aucune dépendance n'était installée**, rendant le backend inutilisable. La
+  version minimale requise est désormais `litellm 1.84`, ce qui écarte au passage
+  des vulnérabilités connues des versions antérieures ; les versions récentes
+  fournissent un paquet précompilé jusqu'à Python 3.14 inclus. `pandas` est borné
+  à `<3` par prudence.
 - **`start-dev.ps1` refusait de démarrer sous Windows PowerShell 5.1**, la
   version livrée d'origine avec Windows 10 et 11 — et celle que recommande le
   README. Le script était enregistré sans marqueur d'encodage : PowerShell 5.1

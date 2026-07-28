@@ -3,12 +3,15 @@ fastapi>=0.110.0
 uvicorn[standard]>=0.29.0
 
 # LLM (interface unifiée — Anthropic, OpenAI, Google, Ollama, LM Studio, JAN)
-# Borne haute : à partir de la 1.84, litellm embarque une extension Rust et ne
-# publie plus de roue universelle `py3-none-any`. Sur un interpréteur sans roue
-# précompilée (Python 3.14 sous Windows, par exemple), pip retombe sur l'archive
-# source et tente une compilation qui échoue faute de Rust — et comme pip résout
-# tout le graphe avant d'installer, AUCUNE dépendance n'est installée.
-litellm>=1.40.0,<1.84
+# Plancher à 1.84 : les versions antérieures portent des vulnérabilités connues
+# (PYSEC-2026-388, PYSEC-2026-3479), corrigées en 1.84.0.
+# Pas de borne haute. litellm a gagné une extension Rust en cours de série : les
+# versions ~1.9x sans roue précompilée pour l'interpréteur courant retombent sur
+# l'archive source et échouent faute de Rust — et comme pip résout tout le graphe
+# avant d'installer, AUCUNE dépendance n'est alors installée. La 1.94 publie des
+# roues jusqu'à cp314 (Windows compris) ; pip prenant la plus récente, laisser la
+# borne ouverte est ce qui installe le mieux. Sur Python 3.14, exiger >= 1.94.
+litellm>=1.84
 
 # Données
 # Borne haute : pandas 3 change des comportements par défaut (types de chaînes,
