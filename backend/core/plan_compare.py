@@ -16,7 +16,7 @@ from __future__ import annotations
 from core.csv_handler import parse_plan_tree
 
 # `semantic_label` vit désormais dans core.evals (source unique, partagée avec
-# la métrique de conservation) ; réexporté ici pour les consommateurs de la comparaison.
+# la métrique de conservation) ; réexporté ici pour les consommateurs de.
 from core.evals import plan_shape, semantic_label
 
 __all__ = ["semantic_label", "compare_plan_variants", "format_comparison_table"]

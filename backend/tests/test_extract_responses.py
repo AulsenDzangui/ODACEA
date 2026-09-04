@@ -1,6 +1,6 @@
 """Parsing des réponses LLM (`extract_plans`, `extract_csv_from_response`).
 
-Tout est déterministe : on rejoue des réponses figées (golden files B5) et des
+Tout est déterministe : on rejoue des réponses figées (golden files) et des
 variantes dégradées observées en production (en-tête manquant, séparateur
 virgule, lignes irrégulières, marqueurs de livraison).
 """

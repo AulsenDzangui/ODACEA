@@ -51,7 +51,6 @@ AGENTS.md
 .cursorrules
 .aider*
 .github/copilot-instructions.md
-
 # Couverture pytest (générée)
 .coverage
 coverage.xml

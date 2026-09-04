@@ -5,7 +5,7 @@ import { StreamingMarkdown } from "@/components/streaming-markdown";
 import { stripStructureMarkers } from "@/lib/csv/extract";
 import { parsePlanModel, type PlanNode } from "@/lib/csv/plan-edit";
 
-// ── Rapport imprimable (D6) ──────────────────────────────────────────────────
+// ── Rapport imprimable ───────────────────────────────────────────────────────
 // Document destiné à l'impression / export PDF (via window.print, déclenché par
 // le bouton « Exporter en PDF »). Masqué à l'écran, révélé par la règle
 // @media print de globals.css. Réunit, pour la traçabilité institutionnelle :

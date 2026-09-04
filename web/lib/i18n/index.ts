@@ -2,7 +2,7 @@
 
 import { fr } from "./fr";
 
-// ── Infrastructure i18n (D11) ────────────────────────────────────────────────
+// ── Infrastructure i18n ──────────────────────────────────────────────────────
 // Volontairement sans dépendance : un catalogue typé par locale + un accès
 // `useT()`. Le français est la seule locale active aujourd'hui ; ajouter
 // l'anglais = créer `en.ts` (satisfaisant le type `Messages`), l'enregistrer

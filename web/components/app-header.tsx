@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
 import { GithubIcon } from "@/components/github-icon";
+import { OdaceaMark } from "@/components/odacea-mark";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { useNewProject } from "@/lib/use-new-project";
@@ -47,10 +48,11 @@ export function AppHeader({
         <Link
           href="/"
           title="Outil Documentaire d'Audit, de Classement et d'Évaluation d'Archives"
-          className="odacea-title hover:opacity-70 transition-opacity"
+          className="flex items-center gap-2 hover:opacity-70 transition-opacity"
           onClick={handleLogo}
         >
-          ODACEA
+          <OdaceaMark className="h-7 w-7 shrink-0" />
+          <span className="odacea-title">ODACEA</span>
         </Link>
         <div>{badge}</div>
         <div className="flex items-center justify-end gap-2">

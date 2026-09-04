@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev -p 9000",
     "build": "next build",
+    "build:desktop": "node scripts/build-desktop-export.mjs",
     "start": "next start -p 9000",
     "lint": "eslint",
     "test": "vitest run",

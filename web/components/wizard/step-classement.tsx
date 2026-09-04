@@ -1,11 +1,13 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { useWizard } from "@/lib/store";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useWizard, type ExportOptions } from "@/lib/store";
 import type {
   ClassementBatch,
   CorrectionExample,
   LlmClassementRow,
+  RevisionPayload,
+  RevisionTurn,
   SedaRow,
   ResipResult,
 } from "@/lib/csv/types";
@@ -39,8 +41,7 @@ import {
   formatApiError,
   unmapUsage,
 } from "@/lib/llm/client-stream";
-import { TokenUsageBar, sumUsage } from "@/components/token-usage-bar";
-import { formatDuration } from "@/lib/tokens/estimate";
+import { sumUsage } from "@/components/token-usage-bar";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -61,26 +62,28 @@ import {
 import { StreamingMarkdown } from "@/components/streaming-markdown";
 import { ThinkingPanel } from "@/components/thinking-panel";
 import { PlanTree } from "@/components/plan-tree";
-import { CsvPreview } from "@/components/csv-preview";
-import { ConfirmDialog } from "@/components/confirm-dialog";
 import { ArborescenceModal } from "@/components/arborescence-modal";
-import { ReclassPanel } from "@/components/wizard/reclass-panel";
 import { DirectivesPanel } from "@/components/wizard/directives-panel";
-import { AnomaliesTable } from "@/components/wizard/anomalies-table";
-import { ApplyPanel } from "@/components/wizard/apply-panel";
+import {
+  RelaunchDialog,
+  type RelaunchMode,
+} from "@/components/wizard/relaunch-dialog";
 import { IconAction } from "@/components/wizard/icon-action";
-import { DEMO_MODE } from "@/lib/llm/config";
+import { plS } from "@/lib/utils";
 import { StepActions } from "@/components/wizard/step-actions";
+import { ClassementCoverageReport } from "@/components/wizard/classement-coverage-report";
+import { ClassementToolsPanel } from "@/components/wizard/classement-tools-panel";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@/components/ui/tabs";
 import {
   AlertCircle,
   Download,
   RotateCcw,
-  Pencil,
   ListTree,
-  StickyNote,
-  BarChart3,
-  Search,
-  AlertTriangle,
   FileText,
   XCircle,
   Layers,
@@ -92,17 +95,58 @@ import {
   FolderTree,
   ChevronDown,
   MessageSquarePlus,
+  Sparkles,
 } from "lucide-react";
 
-/** Suffixe d'accord pluriel français : "s" dès que n ≥ 2, "" sinon (0 et 1 =
- *  singulier). Renvoie un suffixe plutôt qu'un mot pour couvrir les accords
- *  multiples d'une même phrase : `item${plS(n)} envoyé${plS(n)}`. */
-const plS = (n: number) => (n >= 2 ? "s" : "");
 
 /** Horodatage epoch (ms) — isolé hors composant pour mesurer le temps mural du
  *  classement par lots sans déclencher la règle de pureté React sur `Date.now`
  *  (appelé dans des gestionnaires async, jamais au rendu). */
 const nowMs = () => Date.now();
+
+// Mise en forme des titres du SIP produit (cf. options d'export dans les
+// Paramètres). Deux transformations indépendantes :
+//  - folderTitleFromFile : pour les dossiers (RecordGrp), remplace le
+//    Content.Title hiérarchique par le nom technique de l'arborescence (File) ;
+//    la racine (File === ".") n'est pas touchée.
+//  - keepOriginalFileTitle : pour les fichiers (Item), rétablit le titre
+//    d'origine du CSV importé (indexé par chemin File) à la place du renommage
+//    proposé par l'IA.
+// Purement cosmétique (colonne Content.Title) : contrairement à
+// `stripFolderNumbers`, appliqué ici et non au finalize côté moteur. Toute vue
+// du résultat final doit passer par cette fonction, sinon elle montre un titre
+// que ni le CSV téléchargé ni la copie physique ne porteront.
+function applyExportTitleChoices(
+  rows: SedaRow[],
+  { folderTitleFromFile, keepOriginalFileTitle }: ExportOptions,
+  csvOriginal: SedaRow[] | null,
+): SedaRow[] {
+  if (!folderTitleFromFile && !keepOriginalFileTitle) return rows;
+
+  const origItemTitle = new Map<string, string>();
+  if (keepOriginalFileTitle && csvOriginal) {
+    for (const r of csvOriginal) {
+      if (r["Content.DescriptionLevel"] === "Item")
+        origItemTitle.set(r["File"], r["Content.Title"] ?? "");
+    }
+  }
+
+  return rows.map((r) => {
+    const level = r["Content.DescriptionLevel"];
+    if (
+      folderTitleFromFile &&
+      level === "RecordGrp" &&
+      r["File"] &&
+      r["File"] !== "."
+    )
+      return { ...r, "Content.Title": r["File"] };
+    if (keepOriginalFileTitle && level === "Item") {
+      const orig = origItemTitle.get(r["File"]);
+      if (orig) return { ...r, "Content.Title": orig };
+    }
+    return r;
+  });
+}
 
 type BatchState = {
   itemCount: number;
@@ -145,6 +189,10 @@ export function StepClassement() {
     planOrigin,
     classementDirectives,
     setClassementDirectives,
+    classementRevisions,
+    revisionBaseline,
+    armRevision,
+    clearRevision,
     modelId,
     apiKey,
     baseUrl,
@@ -178,6 +226,19 @@ export function StepClassement() {
     setModelClassement,
   } = useWizard();
 
+  // Lignes du SIP telles qu'elles seront exportées : `csvFinal.rows` (déjà
+  // porteur du choix `stripFolderNumbers`, appliqué au finalize) plus les deux
+  // options de titre. Une seule dérivation mémoïsée pour **toutes** les vues du
+  // résultat (aperçu CSV, arborescence avant/après, copie physique) et pour le
+  // téléchargement : aperçu et livrable ne peuvent plus diverger.
+  const rowsExport = useMemo(
+    () =>
+      csvFinal
+        ? applyExportTitleChoices(csvFinal.rows, exportOptions, csvOriginal)
+        : null,
+    [csvFinal, exportOptions, csvOriginal],
+  );
+
   const [streamText, setStreamText] = useState("");
   const [streamThinking, setStreamThinking] = useState("");
   const [confirmRelaunch, setConfirmRelaunch] = useState(false);
@@ -193,7 +254,13 @@ export function StepClassement() {
   // État de session volontairement non persisté : réactiver le few-shot (qui
   // *modifie le prompt*) reste une décision explicite à chaque session.
   const [corrections, setCorrections] = useState<CorrectionExample[]>([]);
-  const [reinjectCorrections, setReinjectCorrections] = useState(false);
+  const [reinjectCorrections, setReinjectCorrectionsState] = useState(false);
+  // Miroir en ref : lu au moment de bâtir la requête (cf. `batchCorrections`).
+  const reinjectRef = useRef(false);
+  const setReinjectCorrections = (b: boolean) => {
+    reinjectRef.current = b;
+    setReinjectCorrectionsState(b);
+  };
   // Volet de correction contrôlé : le triage des anomalies l'ouvre,
   // filtré sur l'item à corriger.
   const [reclassAccordion, setReclassAccordion] = useState("");
@@ -328,8 +395,11 @@ export function StepClassement() {
   // la réinjection ET qu'il existe des corrections. Sinon corps vide → prompt
   // CLA-001 inchangé (byte-identique à la 1.0.0 côté moteur). Transport pur : la
   // sélection/formulation du few-shot vit dans le moteur.
-  const batchCorrections =
-    reinjectCorrections && corrections.length > 0 ? corrections : [];
+  // Fonction et non constante : le dialogue de relance peut activer la
+  // réinjection *puis* lancer dans la foulée — la valeur du rendu courant serait
+  // périmée. `reinjectRef` porte la décision à jour (miroir du state d'affichage).
+  const batchCorrections = () =>
+    reinjectRef.current && corrections.length > 0 ? corrections : [];
 
   // Consignes de classement de l'archiviste, persistées au projet et
   // **réutilisées à chaque relance** (contrairement au few-shot, opt-in par
@@ -337,6 +407,23 @@ export function StepClassement() {
   // Transport pur : la sérialisation et la dérivation des dossiers à création
   // autorisée vivent dans le moteur (`core.cla_directives`).
   const batchDirectives = classementDirectives;
+
+  // Charge de révision jointe à **chaque** lot. Lue à l'exécution via
+  // `getState()` et non depuis le rendu courant : le dialogue de relance arme la
+  // révision puis lance dans la foulée, la closure de ce rendu ne la verrait pas.
+  // Transport pur : on renvoie au moteur ce qu'il nous avait donné (lignes
+  // LLM, stats, avertissements), il en tire consignes + synthèse + colonnes Prev.
+  const revisionPayload = (): RevisionPayload | undefined => {
+    const { revisionBaseline: base, classementRevisions: turns } =
+      useWizard.getState();
+    if (!base && turns.length === 0) return undefined;
+    return {
+      turns: turns.map((t) => ({ consigne: t.consigne })),
+      previousRows: base?.rows ?? [],
+      previousStats: base?.stats ?? null,
+      previousWarnings: base?.warnings ?? [],
+    };
+  };
   // Sous-dossiers créés au dernier classement — rappel dans le panneau.
   const createdFolders = csvFinal?.stats?.foldersCreatedAuthorized ?? [];
   // Options de dossier du plan pour ancrer une consigne (libellés lisibles).
@@ -394,7 +481,7 @@ export function StepClassement() {
       try {
         const result = await streamSse(
           "/classement/batch",
-          { csv, planValide, model: modelId, apiKey, baseUrl, prep, batchIndex: 0, batchSize: 0, corrections: batchCorrections, directives: batchDirectives },
+          { csv, planValide, model: modelId, apiKey, baseUrl, prep, batchIndex: 0, batchSize: 0, corrections: batchCorrections(), directives: batchDirectives, revision: revisionPayload() },
           {
             onText: (delta) => setStreamText((prev) => prev + delta),
             onReasoning: (delta) => setStreamThinking((prev) => prev + delta),
@@ -532,8 +619,9 @@ export function StepClassement() {
           prep,
           batchIndex: i,
           batchSize: classementBatchSize,
-          corrections: batchCorrections,
+          corrections: batchCorrections(),
           directives: batchDirectives,
+          revision: revisionPayload(),
         },
         {
           onText: (delta) => {
@@ -838,6 +926,24 @@ export function StepClassement() {
     resumeUnverifiedRef.current = false;
   };
 
+  /**
+   * Relance décidée dans le dialogue — les deux branches **lancent** le
+   * classement, le geste est complet en une validation (auparavant « Relancer »
+   * n'effaçait que le résultat, et il fallait recliquer « Lancer »).
+   *
+   * En révision, `armRevision` capture le classement courant **avant** que
+   * `setClassementResult(null)` ne l'efface : cette capture devient la seule
+   * copie du tour précédent, que `revisionPayload()` relit ensuite via
+   * `getState()`.
+   */
+  const relaunch = (mode: RelaunchMode, consigne: string) => {
+    if (mode === "revision") armRevision(consigne);
+    else clearRevision();
+    clearBatches();
+    setClassementResult("", "", null, null);
+    void runClassement();
+  };
+
   const stopClassement = () => {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
@@ -852,46 +958,9 @@ export function StepClassement() {
       .replace(/:/g, "")
       .slice(0, 15);
 
-  // Mise en forme des titres au moment du téléchargement (cf. options d'export
-  // dans les Paramètres). Deux transformations indépendantes :
-  //  - folderTitleFromFile : pour les dossiers (RecordGrp), remplace le
-  //    Content.Title hiérarchique par le nom technique de l'arborescence (File) ;
-  //    la racine (File === ".") n'est pas touchée.
-  //  - keepOriginalFileTitle : pour les fichiers (Item), rétablit le titre
-  //    d'origine du CSV importé (indexé par chemin File) à la place du renommage
-  //    proposé par l'IA.
-  const applyExportTitleChoices = (rows: SedaRow[]): SedaRow[] => {
-    const { folderTitleFromFile, keepOriginalFileTitle } = exportOptions;
-    if (!folderTitleFromFile && !keepOriginalFileTitle) return rows;
-
-    const origItemTitle = new Map<string, string>();
-    if (keepOriginalFileTitle && csvOriginal) {
-      for (const r of csvOriginal) {
-        if (r["Content.DescriptionLevel"] === "Item")
-          origItemTitle.set(r["File"], r["Content.Title"] ?? "");
-      }
-    }
-
-    return rows.map((r) => {
-      const level = r["Content.DescriptionLevel"];
-      if (
-        folderTitleFromFile &&
-        level === "RecordGrp" &&
-        r["File"] &&
-        r["File"] !== "."
-      )
-        return { ...r, "Content.Title": r["File"] };
-      if (keepOriginalFileTitle && level === "Item") {
-        const orig = origItemTitle.get(r["File"]);
-        if (orig) return { ...r, "Content.Title": orig };
-      }
-      return r;
-    });
-  };
-
   const downloadCsv = () => {
-    if (!csvFinal) return;
-    const csv = stringifyCsv(applyExportTitleChoices(csvFinal.rows), csvFinal.columns);
+    if (!rowsExport || !csvFinal) return;
+    const csv = stringifyCsv(rowsExport, csvFinal.columns);
     // Pas de BOM : Resip rejette le header avec BOM (le ﻿ se colle à "ID")
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
@@ -1095,6 +1164,9 @@ export function StepClassement() {
   const planEcarts = stats
     ? stats.foldersOffPlan.length + stats.foldersMissing.length
     : 0;
+  // Badge de l'onglet « Outils » (divulgation progressive) : travail de
+  // rattrapage restant, tous compteurs déjà dérivés ci-dessus.
+  const toolsBadgeCount = missing + redundantClassements + anomalies.length;
 
   const csvFinalCols = csvFinal ? Object.keys(csvFinal.rows[0] ?? {}) : [];
   const missingCols = csvFinal
@@ -1176,6 +1248,8 @@ export function StepClassement() {
       {/* ── Launch or results ─────────────────────────────────────────── */}
       {csvFinal === null ? (
         <LaunchSection
+          revisionTurns={revisionBaseline ? classementRevisions : []}
+          onCancelRevision={clearRevision}
           folderTreeValid={folderTreeValid}
           classementRunning={classementRunning}
           lastError={lastError}
@@ -1246,401 +1320,75 @@ export function StepClassement() {
         </>
       ) : (
         <>
-          {classementBatches && (
-            <Alert>
-              <Layers className="h-4 w-4" />
-              <AlertDescription>
-                Classement produit en{" "}
-                <strong>{classementBatches.length} lots</strong>, fusionnés et
-                convertis en une seule passe, identifiants et dates cohérents
-                sur l&apos;ensemble.
-              </AlertDescription>
-            </Alert>
-          )}
-
-          <h3 className="flex items-center gap-2 text-lg font-semibold text-(--ink-900)">
-            <BarChart3 className="h-4 w-4" />
-            Rapport de couverture
-          </h3>
-
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-            <Metric label="Dossiers créés" value={nNewRg} />
-            <Metric
-              label="Items classés"
-              value={`${nNewItems} / ${nOrigItems}`}
-              delta={missing > 0 ? `-${missing} non classé${plS(missing)}` : undefined}
-              deltaKind="bad"
-            />
-            <Metric
-              label="Sans date"
-              value={nNoDate}
-              delta={nNoDate > 0 ? "À compléter" : undefined}
-              deltaKind="bad"
-            />
-            <Metric
-              label="Extensions corrigées"
-              value={nExtFixed}
-              delta={nExtFixed > 0 ? "Vérifier" : undefined}
-              deltaKind="bad"
-            />
-            <Metric
-              label="Respect du plan"
-              value={
-                !stats
-                  ? "—"
-                  : !stats.planParsed
-                    ? "—"
-                    : stats.planMatches
-                      ? "Conforme"
-                      : `${planEcarts} écart${plS(planEcarts)}`
-              }
-              delta={
-                !stats
-                  ? "Relancer le classement"
-                  : !stats.planParsed
-                    ? "Arborescence du plan illisible"
-                    : stats.planMatches
-                      ? "Identique au plan d'audit"
-                      : `${stats.foldersOffPlan.length} hors plan · ${stats.foldersMissing.length} manquant${plS(stats.foldersMissing.length)}`
-              }
-              deltaKind={stats?.planMatches ? "good" : "bad"}
-            />
-          </div>
-
-          {stats &&
-            stats.planParsed &&
-            (!stats.planMatches || stats.itemsMalformed > 0) && (
-              <Alert variant="warning">
-                <AlertTriangle className="h-4 w-4" />
-                <AlertTitle>L&apos;arborescence du classement diffère du plan d&apos;audit</AlertTitle>
-                <AlertDescription className="space-y-1 text-sm">
-                  {stats.foldersOffPlan.length > 0 && (
-                    <p className="mb-0!">
-                      <strong>Dossiers hors plan</strong> (inventés au classement) :{" "}
-                      {stats.foldersOffPlan.join(", ")}
-                    </p>
-                  )}
-                  {stats.foldersMissing.length > 0 && (
-                    <p className="mb-0!">
-                      <strong>Dossiers du plan non réalisés</strong> (aucun contenu) :{" "}
-                      {stats.foldersMissing.join(", ")}
-                    </p>
-                  )}
-                  {stats.itemsMalformed > 0 && (
-                    <p className="mb-0!">
-                      <strong>{stats.itemsMalformed} fichier{plS(stats.itemsMalformed)} à cible malformée</strong>{" "}
-                      (le modèle a indiqué un nom de fichier au lieu d&apos;un
-                      dossier) rattaché{plS(stats.itemsMalformed)} à la racine. Voir les avertissements de
-                      conversion pour plus de détails.
-                    </p>
-                  )}
-                </AlertDescription>
-              </Alert>
-            )}
-
-          {missing > 0 && (nAbsentLlm > 0 || nUnknownTarget > 0) && (
-            <p className="text-xs text-(--ink-500)">
-              Détail des non classés :{" "}
-              {[
-                nAbsentLlm > 0
-                  ? `${nAbsentLlm} absent${plS(nAbsentLlm)} de la sortie LLM`
-                  : null,
-                nUnknownTarget > 0
-                  ? `${nUnknownTarget} avec dossier cible inconnu`
-                  : null,
-              ]
-                .filter(Boolean)
-                .join(" · ")}
-            </p>
-          )}
-
-          {/* ── Rattrapage des non-classés (recentré) ────────────────────
-              Seule retouche que se réserve ODACEA : rattacher au plan les items
-              que l'IA a omis (sinon orphelins à la racine de l'export). Affiché
-              uniquement s'il en reste — la retouche des items déjà classés
-              relève de Resip, vers lequel ODACEA n'est qu'un passage. Le panneau
-              ouvre par défaut sur les seuls problèmes (toggle désactivable) :
-              fichiers non classés à rattacher et fichiers classés en double dont
-              il faut retirer les exemplaires superflus. */}
-          {llmRawRows && llmRawRows.length > 0 && hasReclassWork && (
-            <Accordion
-              type="single"
-              collapsible
-              id="reclass-panel"
-              value={reclassAccordion}
-              onValueChange={setReclassAccordion}
-            >
-              <AccordionItem value="reclass">
-                <AccordionTrigger>
-                  <span className="flex items-center gap-1.5">
-                    <Pencil className="h-3.5 w-3.5" />
-                    {reclassPanelLabel}
-                  </span>
-                </AccordionTrigger>
-                <AccordionContent>
-                  <div className="space-y-2 pt-2">
-                    {lastError && (
-                      <Alert variant="destructive">
-                        <AlertCircle className="h-4 w-4" />
-                        <AlertDescription className="text-xs whitespace-pre-line">
-                          {lastError}
-                        </AlertDescription>
-                      </Alert>
-                    )}
-                    <ReclassPanel
-                      csvOriginal={csvOriginal}
-                      planValide={planValide}
-                      llmRawRows={llmRawRows}
-                      busy={reclassBusy}
-                      onApply={applyCorrections}
-                      planOriginal={planValideOriginal}
-                      onCreateFolder={createPlanFolder}
-                      onRenameFolder={renamePlanFolder}
-                      onDeleteFolder={deletePlanFolder}
-                      initialSearch={reclassSearch}
-                    />
-                  </div>
-                </AccordionContent>
-              </AccordionItem>
-            </Accordion>
-          )}
-
-          {nNoDate > 0 && (
-            <Alert variant="warning">
-              <AlertTriangle className="h-4 w-4" />
-              <AlertDescription>
-                {nNoDate} Item{plS(nNoDate)} sans date. Vérifiez les champs
-                StartDate/EndDate dans le CSV final.
-              </AlertDescription>
-            </Alert>
-          )}
-
-          {coherenceErrors.length > 0 && (
-            <Alert variant="destructive">
-              <AlertCircle className="h-4 w-4" />
-              <AlertTitle>Problèmes de cohérence détectés</AlertTitle>
-              <AlertDescription>
-                <ul className="list-inside list-disc text-sm">
-                  {coherenceErrors.map((err, i) => (
-                    <li key={i}>{err}</li>
-                  ))}
-                </ul>
-              </AlertDescription>
-            </Alert>
-          )}
-
-          {/* ── Triage des anomalies : groupées, filtrables, reliées
-                 au panneau de correction. ─────────────────────────── */}
-          {anomalies.length > 0 && (
-            <Accordion type="single" collapsible>
-              <AccordionItem value="warns">
-                <AccordionTrigger>
-                  <span className="flex items-center gap-1.5">
-                    <AlertTriangle className="h-3.5 w-3.5 text-(--warning-500)" />
-                    {anomalies.length} anomalie{plS(anomalies.length)} de conversion
-                  </span>
-                </AccordionTrigger>
-                <AccordionContent>
-                  <div className="pt-2">
-                    <AnomaliesTable
-                      anomalies={anomalies}
-                      onLocate={
-                        llmRawRows && llmRawRows.length > 0 && hasReclassWork
-                          ? locateItem
-                          : undefined
-                      }
-                    />
-                  </div>
-                </AccordionContent>
-              </AccordionItem>
-            </Accordion>
-          )}
-
-          <Separator />
-
-          {/* ── Pour aller plus loin (avancé) — replié par défaut ─────────────
-              Vérification et diagnostic regroupés pour l'expert, sans alourdir la
-              vue par défaut destinée à l'archiviste. Rien n'est retiré : tout
-              reste atteignable, simplement replié. ─────────────────────────── */}
-          <p className="text-xs font-medium tracking-wide text-(--ink-400) uppercase">
-            Pour aller plus loin
-          </p>
-
-          <Accordion type="single" collapsible>
-            <AccordionItem value="apercu-final">
-              <AccordionTrigger>
-                <span className="flex items-center gap-1.5">
-                  <FileText className="h-3.5 w-3.5" />
-                  Aperçu du CSV final ({csvFinal.rows.length} lignes ·{" "}
-                  {csvFinal.columns.length} colonnes)
-                </span>
-              </AccordionTrigger>
-              <AccordionContent>
-                <div className="space-y-1 pt-2">
-                  <p className="text-xs text-(--ink-500)">
-                    Aperçu des 20 premières lignes seulement.
-                  </p>
-                  <CsvPreview
-                    rows={applyExportTitleChoices(csvFinal.rows)}
-                    maxRows={20}
-                  />
-                </div>
-              </AccordionContent>
-            </AccordionItem>
-          </Accordion>
-
-          {!classementBatches && preCsvText && (
-            <Accordion type="single" collapsible>
-              <AccordionItem value="demarche">
-                <AccordionTrigger>
-                  <span className="flex items-center gap-1.5">
-                    <StickyNote className="h-3.5 w-3.5" />
-                    Démarche de l&apos;IA
-                  </span>
-                </AccordionTrigger>
-                <AccordionContent>
-                  <div className="pt-2">
-                    <StreamingMarkdown text={preCsvText} />
-                  </div>
-                </AccordionContent>
-              </AccordionItem>
-            </Accordion>
-          )}
-
-          {thinkingClassement && <ThinkingPanel thinking={thinkingClassement} />}
-
-          {llmRawRows && llmRawRows.length > 0 && (
-            <Accordion type="single" collapsible>
-              <AccordionItem value="debug">
-                <AccordionTrigger>
-                  <span className="flex items-center gap-1.5">
-                    <Search className="h-3.5 w-3.5" />
-                    {classementBatches
-                      ? `CSV brut de l'IA par lot (${classementBatches.length})`
-                      : "CSV brut de l'IA (avant conversion)"}
-                  </span>
-                </AccordionTrigger>
-                <AccordionContent>
-                  {classementBatches ? (
-                    <div className="space-y-3 pt-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={downloadRawLlmCsv}
-                      >
-                        <Download className="mr-1 h-3.5 w-3.5" />
-                        Télécharger le CSV brut complet ({llmRawRows.length}{" "}
-                        lignes)
-                      </Button>
-                      {classementBatches.map((b, i) => (
-                        <div
-                          key={i}
-                          className="space-y-1.5 rounded-md border border-(--ink-100) p-2"
-                        >
-                          <p className="text-xs font-medium text-(--ink-700)">
-                            Lot {i + 1} / {classementBatches.length} —{" "}
-                            {b.itemCount} item{plS(b.itemCount)} envoyé{plS(b.itemCount)} · {b.rows.length}{" "}
-                            ligne{plS(b.rows.length)} produite{plS(b.rows.length)}
-                          </p>
-                          {(b.preCsv ?? "").trim() && (
-                            <Accordion
-                              type="single"
-                              collapsible
-                              className="border-none bg-transparent px-0"
-                            >
-                              <AccordionItem value="demarche">
-                                <AccordionTrigger className="py-1 text-xs font-medium text-(--ink-600)">
-                                  <span className="flex items-center gap-1.5">
-                                    <StickyNote className="h-3 w-3" />
-                                    Démarche de l&apos;IA
-                                  </span>
-                                </AccordionTrigger>
-                                <AccordionContent className="pb-1 text-xs">
-                                  <StreamingMarkdown
-                                    text={(b.preCsv ?? "").trim()}
-                                  />
-                                </AccordionContent>
-                              </AccordionItem>
-                            </Accordion>
-                          )}
-                          {b.rows.length > 0 ? (
-                            <>
-                              <CsvPreview
-                                rows={
-                                  b.rows as unknown as Record<string, string>[]
-                                }
-                                maxRows={10}
-                              />
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() =>
-                                  downloadRowsCsv(b.rows, `_lot${i + 1}`)
-                                }
-                              >
-                                <Download className="mr-1 h-3.5 w-3.5" />
-                                Télécharger ce lot
-                              </Button>
-                            </>
-                          ) : (
-                            <p className="text-xs text-(--ink-500)">
-                              Aucune ligne produite pour ce lot.
-                            </p>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="space-y-2 pt-2">
-                      <CsvPreview
-                        rows={llmRawRows as unknown as Record<string, string>[]}
-                        maxRows={20}
-                      />
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={downloadRawLlmCsv}
-                      >
-                        <Download className="mr-1 h-3.5 w-3.5" />
-                        Télécharger le CSV brut IA
-                      </Button>
-                    </div>
-                  )}
-                </AccordionContent>
-              </AccordionItem>
-            </Accordion>
-          )}
-
-          {(usageClassementTotal ||
-            usageAudit ||
-            durationClassementTotal ||
-            durationAudit) && (
-            <div className="space-y-0.5">
-              <TokenUsageBar usage={usageClassementTotal} durationMs={durationClassementTotal} label="CLA-001" model={modelClassement} />
-              {((usageAudit && usageClassementTotal) || (durationAudit && durationClassementTotal)) && (
-                <p className="text-xs font-medium text-(--ink-500)">
-                  {(() => {
-                    const segments: string[] = [];
-                    if (usageAudit && usageClassementTotal) {
-                      const total = sumUsage([usageAudit, usageClassementTotal]);
-                      if (total?.totalTokens)
-                        segments.push(`${(total.totalTokens / 1000).toLocaleString("fr-FR", { maximumFractionDigits: 1 })} k tokens`);
-                    }
-                    if (durationAudit && durationClassementTotal)
-                      segments.push(`traité en ${formatDuration(durationAudit + durationClassementTotal)}`);
-                    return `Total session — ${segments.join(". ")}`;
-                  })()}
-                </p>
-              )}
-            </div>
-          )}
-
-          {/* — application physique du classement : copie du SIP produit
-              vers une arborescence cible (la source n'est jamais mutée). Backend
-              local uniquement : l'endpoint /apply est refusé en démonstration. */}
-          {!DEMO_MODE && csvFinal.rows.length > 0 && (
-            <ApplyPanel rows={applyExportTitleChoices(csvFinal.rows)} />
-          )}
+          {/* Résultat (lecture) / Outils (correction, diagnostic, application) —
+              divulgation progressive : l'archiviste atterrit sur un rapport de
+              lecture seule, les outils de correction et de débogage vivent dans
+              un onglet séparé plutôt qu'empilés à la suite (badge = travail de
+              rattrapage restant : non-classés, doublons, anomalies). */}
+          <Tabs defaultValue="resultat">
+            <TabsList>
+              <TabsTrigger value="resultat">Résultat</TabsTrigger>
+              <TabsTrigger value="outils">
+                Outils
+                {toolsBadgeCount > 0 && ` (${toolsBadgeCount})`}
+              </TabsTrigger>
+            </TabsList>
+            <TabsContent value="resultat">
+              <ClassementCoverageReport
+                classementRevisions={classementRevisions}
+                classementBatches={classementBatches}
+                nNewRg={nNewRg}
+                nNewItems={nNewItems}
+                nOrigItems={nOrigItems}
+                missing={missing}
+                nNoDate={nNoDate}
+                nExtFixed={nExtFixed}
+                stats={stats}
+                planEcarts={planEcarts}
+                nAbsentLlm={nAbsentLlm}
+                nUnknownTarget={nUnknownTarget}
+              />
+            </TabsContent>
+            <TabsContent value="outils">
+              <ClassementToolsPanel
+                llmRawRows={llmRawRows}
+                hasReclassWork={hasReclassWork}
+                reclassAccordion={reclassAccordion}
+                onReclassAccordionChange={setReclassAccordion}
+                reclassPanelLabel={reclassPanelLabel}
+                lastError={lastError}
+                csvOriginal={csvOriginal}
+                planValide={planValide}
+                planValideOriginal={planValideOriginal}
+                reclassBusy={reclassBusy}
+                onApplyCorrections={applyCorrections}
+                onCreateFolder={createPlanFolder}
+                onRenameFolder={renamePlanFolder}
+                onDeleteFolder={deletePlanFolder}
+                reclassSearch={reclassSearch}
+                onLocateItem={
+                  llmRawRows && llmRawRows.length > 0 && hasReclassWork
+                    ? locateItem
+                    : undefined
+                }
+                nNoDate={nNoDate}
+                coherenceErrors={coherenceErrors}
+                anomalies={anomalies}
+                csvFinal={csvFinal}
+                rowsExport={rowsExport}
+                preCsvText={preCsvText}
+                classementBatches={classementBatches}
+                thinkingClassement={thinkingClassement}
+                onDownloadRawLlmCsv={downloadRawLlmCsv}
+                onDownloadRowsCsv={downloadRowsCsv}
+                usageClassementTotal={usageClassementTotal}
+                usageAudit={usageAudit}
+                durationClassementTotal={durationClassementTotal}
+                durationAudit={durationAudit}
+                modelClassement={modelClassement}
+              />
+            </TabsContent>
+          </Tabs>
 
           {/* CTA de l'étape + relance. La navigation entre étapes passe par le
               fil d'Ariane ; la remise à zéro par « Nouveau projet » (sidebar). */}
@@ -1659,7 +1407,7 @@ export function StepClassement() {
               <ListTree className="mr-2 h-4 w-4" />
               Arborescence
             </Button>
-            {/* Exports fichier secondaires regroupés (allègement du pied) : PDF (D6),
+            {/* Exports fichier secondaires regroupés (allègement du pied) : PDF,
                 journal de traitement, arborescence modèle. Tous rendus
                 par le moteur à partir de métadonnées seules. Le spinner du
                 déclencheur signale l'export en cours, la liste étant alors fermée. */}
@@ -1708,25 +1456,26 @@ export function StepClassement() {
         </>
       )}
 
-      <ConfirmDialog
+      <RelaunchDialog
         open={confirmRelaunch}
         onOpenChange={setConfirmRelaunch}
-        title="Relancer le classement ?"
-        description="Le classement actuel (réponse LLM brute et CSV final) sera supprimé. Le plan validé, l'audit et le CSV importé sont conservés."
-        confirmLabel="Relancer"
-        destructive
-        onConfirm={() => {
-          clearBatches();
-          setClassementResult("", "", null, null);
-        }}
+        canRevise={(llmRawRows?.length ?? 0) > 0 || revisionBaseline !== null}
+        previousItemCount={llmRawRows?.length ?? revisionBaseline?.itemCount ?? 0}
+        previousStats={csvFinal?.stats ?? revisionBaseline?.stats ?? null}
+        turns={classementRevisions}
+        batchSize={classementBatchSize}
+        correctionCount={corrections.length}
+        reinjectCorrections={reinjectCorrections}
+        onReinjectCorrections={setReinjectCorrections}
+        onRelaunch={relaunch}
       />
 
-      {csvFinal && (
+      {rowsExport && (
         <ArborescenceModal
           open={arborescenceOpen}
           onOpenChange={setArborescenceOpen}
-          csvOriginal={csvOriginal}
-          csvFinal={csvFinal}
+          rowsOriginal={csvOriginal}
+          rowsFinal={rowsExport}
         />
       )}
     </div>
@@ -1751,6 +1500,8 @@ function LaunchSection({
   onStop,
   onRetryBatch,
   onRetryAll,
+  revisionTurns,
+  onCancelRevision,
 }: {
   folderTreeValid: boolean;
   classementRunning: boolean;
@@ -1769,6 +1520,9 @@ function LaunchSection({
   onStop: () => void;
   onRetryBatch: (i: number) => void;
   onRetryAll: () => void;
+  /** Consignes de la révision armée — vide = classement normal. */
+  revisionTurns: RevisionTurn[];
+  onCancelRevision: () => void;
 }) {
   const isBatched = batches !== null;
   const total = batches?.length ?? 0; // nombre de lots (en-têtes de volets)
@@ -1810,13 +1564,44 @@ function LaunchSection({
 
   return (
     <div className="space-y-3">
-      <Alert>
-        <AlertDescription>
-          Le classement va reclasser virtuellement chaque fichier selon le plan
-          validé et produire un CSV SEDA restructuré. Cette étape peut prendre
-          plusieurs minutes selon la taille du vrac.
-        </AlertDescription>
-      </Alert>
+      {revisionTurns.length > 0 ? (
+        // Révision armée : le prochain lancement est un tour de révision.
+        // L'état survit à un rechargement — sans ce rappel, on relancerait une
+        // révision sans savoir laquelle.
+        <Alert>
+          <Sparkles className="h-4 w-4" />
+          <AlertTitle>
+            Révision armée — tour {revisionTurns.length}
+          </AlertTitle>
+          <AlertDescription>
+            <p className="text-xs">
+              Le classement sera <strong>révisé</strong> : le modèle recevra son
+              classement précédent et vos consignes.
+            </p>
+            <ul className="mt-1 space-y-0.5 text-xs">
+              {revisionTurns.map((t, i) => (
+                <li key={`${t.at}-${i}`}>• {t.consigne}</li>
+              ))}
+            </ul>
+            <Button
+              variant="link"
+              size="sm"
+              className="mt-1 h-auto p-0 text-xs"
+              onClick={onCancelRevision}
+            >
+              Retirer la révision et repartir d&apos;un classement neuf
+            </Button>
+          </AlertDescription>
+        </Alert>
+      ) : (
+        <Alert>
+          <AlertDescription>
+            Le classement va reclasser virtuellement chaque fichier selon le plan
+            validé et produire un CSV SEDA restructuré. Cette étape peut prendre
+            plusieurs minutes selon la taille du vrac.
+          </AlertDescription>
+        </Alert>
+      )}
 
       {lastError && (
         <Alert variant="destructive">
@@ -2076,7 +1861,7 @@ function ItemProgressBar({
         className="relative h-2 w-full overflow-hidden rounded-full bg-(--ink-100)"
       >
         <div
-          className="h-full bg-(--ink-700) transition-all"
+          className="h-full bg-(--brand-500) transition-all"
           style={{ width: `${pct}%` }}
         />
       </div>
@@ -2130,7 +1915,7 @@ function BatchProgressBar({ batches }: { batches: BatchState[] }) {
               ? "bg-(--danger-500)"
               : b.status === "done"
                 ? "bg-(--success-500)"
-                : "bg-(--ink-700)";
+                : "bg-(--brand-500)";
           return (
             <div
               key={i}
@@ -2152,7 +1937,7 @@ function BatchProgressBar({ batches }: { batches: BatchState[] }) {
           {nDone} / {batches.length} lot{plS(batches.length)} terminé{plS(nDone)}
         </span>
         {nRunning > 0 && (
-          <span className="text-(--ink-700)">{nRunning} en cours</span>
+          <span className="text-(--brand-500)">{nRunning} en cours</span>
         )}
         {nError > 0 && (
           <span className="text-(--danger-500)">
@@ -2167,7 +1952,7 @@ function BatchProgressBar({ batches }: { batches: BatchState[] }) {
 function BatchStatusIcon({ status }: { status: BatchState["status"] }) {
   switch (status) {
     case "running":
-      return <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-(--ink-700)" />;
+      return <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-(--brand-500)" />;
     case "done":
       return <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-(--success-500)" />;
     case "error":
@@ -2177,31 +1962,3 @@ function BatchStatusIcon({ status }: { status: BatchState["status"] }) {
   }
 }
 
-function Metric({
-  label,
-  value,
-  delta,
-  deltaKind,
-}: {
-  label: string;
-  value: number | string;
-  delta?: string;
-  deltaKind?: "good" | "bad";
-}) {
-  return (
-    <div className="rounded-md border border-(--ink-100) bg-(--paper-50) p-3">
-      <div className="text-xs text-(--ink-500)">{label}</div>
-      <div className="mt-1 text-2xl font-semibold text-(--ink-900)">{value}</div>
-      {delta && (
-        <div
-          className={
-            "mt-0.5 text-xs " +
-            (deltaKind === "bad" ? "text-(--danger-500)" : "text-(--success-500)")
-          }
-        >
-          {delta}
-        </div>
-      )}
-    </div>
-  );
-}

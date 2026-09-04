@@ -40,6 +40,41 @@ export type ClassementDirective = {
   allowCreation: boolean;
 };
 
+// ── Révision d'un classement ────────────────────────────────────────────────
+// Relancer CLA-001 en lui donnant **son propre classement précédent** et ce qu'il
+// faut y corriger. Le front ne fait que collecter et transporter : la mise en
+// forme du canal (consignes + synthèse mesurée) et le report ligne à ligne des
+// décisions vivent dans le moteur (`core.cla_revision`).
+
+/** Une consigne de révision, horodatée pour l'affichage de l'historique.
+ *  `at` reste côté front (présentation) — le moteur ne reçoit que `consigne`. */
+export type RevisionTurn = {
+  consigne: string;
+  at: string;
+};
+
+/** Le classement précédent, capturé **avant** d'être effacé par la relance : une
+ *  fois le run reparti, c'est la seule copie du tour précédent. `stats`/`warnings`
+ *  sont ceux reçus du finalize — renvoyés tels quels, le moteur en tire la
+ *  synthèse. */
+export type RevisionBaseline = {
+  rows: LlmClassementRow[];
+  stats: ResipStats | null;
+  warnings: string[];
+  /** Nombre d'items classés au tour précédent — affiché dans le dialogue. */
+  itemCount: number;
+};
+
+/** Forme exacte du champ `revision` de /classement/batch. Le front renvoie tel
+ *  quel ce que le moteur lui avait donné (`llmRows`, `resip.stats`,
+ * `resip.warnings`) : aucune dérivation en TS. */
+export type RevisionPayload = {
+  turns: { consigne: string }[];
+  previousRows: LlmClassementRow[];
+  previousStats: ResipStats | null;
+  previousWarnings: string[];
+};
+
 export type SimplifiedItem = {
   Ref: string;
   Path: string; // chemin physique (aperçu/réhydratation), non envoyé au LLM
@@ -71,7 +106,7 @@ export type ResipStats = {
   // ── Compteurs de qualité, calculés à la source par le moteur ───────────────
   // Le front les affiche tels quels — jamais re-dérivés des messages texte.
   // Optionnels : absents des projets persistés avant l'introduction des
-  // compteurs de qualité (les lectures appliquent un défaut `?? 0`).
+  // compteurs (les lectures appliquent un défaut `?? 0`).
   /** Items du CSV source à classer. */
   itemsTotal?: number;
   /** Items effectivement rattachés à un dossier du plan. */

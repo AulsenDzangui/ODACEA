@@ -72,3 +72,10 @@ DEMO_MAX_BODY_BYTES = int(DEMO_MAX_BODY_MB * 1024 * 1024)
 # connexion inactive pendant les longues réflexions des modèles de raisonnement
 # (avant le premier token). 0 désactive le heartbeat.
 SSE_HEARTBEAT_S = float(os.getenv("ODACEA_SSE_HEARTBEAT_S", "15"))
+
+# ── Mode tout-en-un ───────────────────────────────────────────────────────────
+# Dossier du front exporté en statique (`web/out`, `next build` avec
+# `NEXT_OUTPUT=export`) que `desktop.py` sert à la racine, en plus de l'API.
+# Vide par défaut : n'affecte ni Docker, ni le dev, ni la démo — la route
+# n'est montée par `api/main.py` que si ce dossier existe réellement.
+ODACEA_STATIC_DIR = os.getenv("ODACEA_STATIC_DIR", "")

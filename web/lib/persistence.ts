@@ -6,6 +6,8 @@ import type {
   LlmClassementRow,
   ClassementBatch,
   ClassementDirective,
+  RevisionTurn,
+  RevisionBaseline,
 } from "@/lib/csv/types";
 import type { LlmUsage } from "@/lib/llm/client-stream";
 import type { PlanOrigin, WizardStep } from "@/lib/store";
@@ -53,6 +55,11 @@ export type StoredProject = {
   planOrigin?: PlanOrigin;
   // Consignes de classement — optionnel (absent des projets antérieurs → []).
   classementDirectives?: ClassementDirective[];
+  // Révision du classement — optionnels (absents des projets antérieurs
+  // → [] / null). Persistés pour qu'une révision armée survive à un rechargement :
+  // le baseline est la seule copie du tour précédent une fois la relance partie.
+  classementRevisions?: RevisionTurn[];
+  revisionBaseline?: RevisionBaseline | null;
   briefMode: boolean;
   // Plan de classement de référence retenu pour l'audit. Optionnels :
   // absents des projets enregistrés avant cette version.
@@ -266,7 +273,7 @@ export function duplicateProject(stem: string): string {
   return saveProject(newName, snapshot);
 }
 
-// ── Quota localStorage (D9) ──────────────────────────────────────────────────
+// ── Quota localStorage ───────────────────────────────────────────────────────
 // localStorage n'expose pas son quota ; la limite usuelle des navigateurs est
 // ~5 Mo par origine. On mesure l'occupation réelle (somme des paires clé/valeur,
 // ×2 pour l'encodage UTF-16) et on prévient avant la saturation — un projet avec
@@ -293,7 +300,7 @@ export function estimateStorageUsage(): StorageUsage {
   return { bytes, ratio: bytes / LOCALSTORAGE_BUDGET_BYTES };
 }
 
-// ── Export / import de projet (.json) (D9) ───────────────────────────────────
+// ── Export / import de projet (.json) ────────────────────────────────────────
 // Portabilité d'un projet entre postes : fichier autonome (aucun secret — la
 // config LLM/clé API vit dans une clé séparée, non incluse).
 

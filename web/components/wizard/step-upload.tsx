@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/accordion";
 import { CsvPreview } from "@/components/csv-preview";
 import { StepActions } from "@/components/wizard/step-actions";
+import { AdvancedSection } from "@/components/wizard/advanced-section";
 import { EnrichPanel } from "@/components/wizard/enrich-panel";
 import { FolderImportPanel } from "@/components/wizard/folder-import-panel";
 import { FileText, ArrowRight, AlertCircle, AlertTriangle, CheckCircle2, Sliders, PlayCircle, Loader2, ShieldCheck, BookOpen } from "lucide-react";
@@ -297,7 +298,7 @@ export function StepUpload() {
             )}
           </div>
 
-          {/* Onboarding (D7) : démarrer sans fichier en un clic + accès au
+          {/* Onboarding : démarrer sans fichier en un clic + accès au
               guide. Affiché tant qu'aucun CSV n'est chargé. */}
           {!csvOriginal && (
             <div className="mt-3 flex flex-col items-center gap-2 text-center sm:flex-row sm:justify-center">
@@ -328,17 +329,27 @@ export function StepUpload() {
         </div>
       )}
 
-      {/* — import direct d'un dossier local (alternative à l'upload CSV).
-          Backend local uniquement : l'endpoint /parse/from-folder est refusé en
-          démonstration (il scanne des dossiers sur la machine de l'archiviste). */}
+      {/* Options avancées d'import — regroupe les deux chemins qui ne servent
+          qu'à une minorité de scénarios, tous deux réservés au backend local
+          (endpoints refusés en démonstration, ils touchent le disque de
+          l'archiviste) : le scan direct d'un dossier (alternative à
+          l'upload CSV) et l'enrichissement local (du CSV déjà chargé). */}
       {!DEMO_MODE && (
-        <FolderImportPanel
-          prep={prep}
-          batchSize={classementBatchSize}
-          model={modelId}
-          baseUrl={baseUrl}
-          onImported={handleFolderImported}
-        />
+        <AdvancedSection title="Options avancées d'import" icon={Sliders}>
+          <FolderImportPanel
+            prep={prep}
+            batchSize={classementBatchSize}
+            model={modelId}
+            baseUrl={baseUrl}
+            onImported={handleFolderImported}
+          />
+          {csvOriginal && csvErrors.length === 0 && (
+            <EnrichPanel
+              csvText={stringifyCsv(csvOriginal)}
+              onEnriched={handleEnriched}
+            />
+          )}
+        </AdvancedSection>
       )}
 
       {serverError && (
@@ -373,16 +384,6 @@ export function StepUpload() {
               {csvOriginal.length} lignes · {nOrigCols} colonnes
             </AlertDescription>
           </Alert>
-
-          {/* enrichissement local (étape 0, facultatif). Réservé au backend
-              local : l'endpoint /enrich est refusé en démonstration (il lit des
-              fichiers sur la machine de l'archiviste). */}
-          {!DEMO_MODE && (
-            <EnrichPanel
-              csvText={stringifyCsv(csvOriginal)}
-              onEnriched={handleEnriched}
-            />
-          )}
 
           {tokenEst && (
             <div className="rounded-md border border-(--ink-200) bg-(--paper-75) px-4 py-3 text-sm">

@@ -1,6 +1,6 @@
 // E2E Playwright du wizard complet : upload → audit → classement →
 // téléchargement, contre un backend entièrement mocké via page.route.
-// Réutilise les fixtures B5 du backend (CSV + golden files LLM) : le front est
+// Réutilise les fixtures du backend (CSV + golden files LLM) : le front est
 // testé sur exactement la même matière que le moteur Python.
 import { expect, test, type Page } from "@playwright/test";
 import fs from "node:fs";
@@ -335,9 +335,9 @@ test("wizard complet : upload → audit → classement → téléchargement", as
   await expect(page.getByText("Coût d'entrée estimé")).toBeVisible();
   await expect(page.getByText(/GPT-5 mini/)).toBeVisible();
   await expect(page.getByText(/< 0,01 €/)).toBeVisible();
-  // La recommandation de budget d'entrée AUD-001 n'est plus *affichée* : le bloc
-  // a été retiré de l'écran d'import lors de l'allègement du texte. Le calcul
-  // moteur reste couvert côté backend ; rien à asserter ici.
+  // La recommandation de budget d'entrée AUD-001 n'est plus *affichée* : le
+  // bloc a été retiré de l'écran d'import lors de l'allègement du texte (825172b).
+  // Le calcul moteur reste couvert côté backend ; rien à asserter ici.
   await page.getByText("Continuer vers l'audit").click();
 
   // ── Étape 2 : audit ───────────────────────────────────────────────────────
@@ -345,6 +345,11 @@ test("wizard complet : upload → audit → classement → téléchargement", as
   // /reference-plan/from-csv) + le mode « conform », et on vérifie que le bloc et
   // le mode partent bien dans le corps de /audit (le front ne fait que
   // transporter — l'injection est côté moteur).
+  // Divulgation progressive : le plan de référence vit sous « Options
+  // avancées de l'audit ».
+  await page
+    .getByRole("button", { name: /Options avancées de l'audit/ })
+    .click();
   await page
     .locator('[data-testid="reference-plan-dropzone"] input[type="file"]')
     .setInputFiles({
@@ -388,6 +393,11 @@ test("wizard complet : upload → audit → classement → téléchargement", as
   expect(download.suggestedFilename()).toMatch(/^classement_final_.*\.csv$/);
 
   // Traçabilité : le modèle figé de l'étape est affiché à l'écran (par étape).
+  // Divulgation progressive : sous l'onglet « Outils » › « Pour aller plus loin ».
+  await page.getByRole("tab", { name: /Outils/ }).click();
+  await page
+    .getByRole("button", { name: /Pour aller plus loin/ })
+    .click();
   await expect(page.getByText(/modèle : gpt-test/).first()).toBeVisible();
 
   // Les exports secondaires sont regroupés sous le menu « Exporter » (allègement
@@ -444,9 +454,14 @@ test("Audit comparatif multi-plans : N audits, comparaison, choix", async ({
   await expect(page.getByText("Continuer vers l'audit")).toBeVisible();
   await page.getByText("Continuer vers l'audit").click();
 
-  // Demander 2 propositions à comparer. On vise le rôle `combobox` et non
-  // `getByLabel` : la bulle d'aide voisine porte un aria-label qui contient le
-  // libellé du champ, et `getByLabel` (sous-chaîne) résolvait donc deux éléments.
+  // Demander 2 propositions à comparer. Divulgation progressive : le
+  // sélecteur vit sous « Options avancées de l'audit ». On vise le rôle
+  // `combobox` et non `getByLabel` : la bulle d'aide voisine porte un
+  // aria-label qui contient le libellé du champ, et `getByLabel` (sous-chaîne)
+  // résolvait donc deux éléments.
+  await page
+    .getByRole("button", { name: /Options avancées de l'audit/ })
+    .click();
   await page
     .getByRole("combobox", { name: /Propositions de plan à comparer/ })
     .click();
@@ -499,6 +514,10 @@ test("Enrichissement local : le vrac enrichi est réinjecté via /parse", async 
   await expect(page.getByText("Continuer vers l'audit")).toBeVisible();
 
   // Ouvre le panneau d'enrichissement (étape 0, backend local) et lance-le.
+  // Divulgation progressive : regroupé sous « Options avancées d'import ».
+  await page
+    .getByRole("button", { name: /Options avancées d'import/ })
+    .click();
   await page.getByRole("button", { name: /Enrichissement local/ }).click();
   await page
     .getByLabel("Racine locale du vrac")
@@ -542,6 +561,10 @@ test("Plan fourni adopté sans audit LLM : import → plan → classement", asyn
   await page.getByText("Continuer vers l'audit").click();
 
   // Déposer un plan « dossiers seuls » dans la zone d'adoption dédiée.
+  // Divulgation progressive : chemin alternatif sous sa propre section avancée.
+  await page
+    .getByRole("button", { name: /Vous avez déjà un plan/ })
+    .click();
   const planFromFileRequest = page.waitForRequest(
     (req) =>
       req.url().includes("/api/py/plan/from-file") && req.method() === "POST",
@@ -614,12 +637,12 @@ test("erreur LLM à l'audit : message et hint affichés sans console", async ({ 
   await page.getByText("Continuer vers l'audit").click();
   await page.getByRole("button", { name: "Lancer l'audit" }).click();
 
-  // Taxonomie d'erreurs rendue dans l'alerte : message + action recommandée.
+  // Taxonomie rendue dans l'alerte : message + action recommandée.
   await expect(page.getByText("Clé API invalide ou manquante pour ce modèle.")).toBeVisible();
   await expect(page.getByText(/corrigez la clé API dans les réglages/)).toBeVisible();
 });
 
-// Critères d'acceptation : démo en < 3 clics (D7), plan éditable en
+// Critères d'acceptation : démo en < 3 clics, plan éditable en
 // arbre sans Markdown, re-classement sans appel LLM.
 test(" — démo en <3 clics, édition du plan en arbre, reclassement sans LLM", async ({
   page,
@@ -636,7 +659,7 @@ test(" — démo en <3 clics, édition du plan en arbre, reclassement sans LLM",
 
   await page.goto("/");
 
-  // ── D7 : auditer la démo en 3 clics depuis l'arrivée ──────────────────────
+  // ── auditer la démo en 3 clics depuis l'arrivée ───────────────────────────
   await page
     .getByRole("button", { name: /Charger un jeu de démonstration/ })
     .click(); // clic 1
@@ -729,6 +752,9 @@ test(" — démo en <3 clics, édition du plan en arbre, reclassement sans LLM",
   const llmCallsAfterClassement = llmCalls.length;
 
   // ── rattacher le fichier non classé et re-finaliser sans rappeler le LLM ─
+  // Divulgation progressive : les outils de correction vivent sous l'onglet
+  // « Outils », séparé du rapport de lecture par défaut.
+  await page.getByRole("tab", { name: /Outils/ }).click();
   await page
     .getByRole("button", { name: /Corriger le classement — 1 non classé/ })
     .click();
@@ -746,14 +772,17 @@ test(" — démo en <3 clics, édition du plan en arbre, reclassement sans LLM",
   expect(llmCalls.length).toBe(llmCallsAfterClassement);
 
   // ── réinjection opt-in des corrections validées comme exemples ────────────
-  // Relancer le classement révèle l'option (visible car une correction
+  // Le dialogue de relance porte l'option (visible car une correction
   // vient d'être capturée). Sans opt-in, le corps de /classement/batch ne porte
   // aucune correction (prompt inchangé) ; avec opt-in, la correction est envoyée
   // au moteur (qui en formule le few-shot — le front ne fait que transporter).
+  // La relance est d'un seul geste : valider le dialogue lance le classement.
   await page.getByRole("button", { name: /Relancer le classement/ }).click();
-  await page.getByRole("button", { name: "Relancer", exact: true }).click();
+  // Un classement existe : le dialogue s'ouvre sur la révision. Ici on veut la
+  // relance à zéro — l'autre onglet.
+  await page.getByRole("tab", { name: /identique/ }).click();
 
-  const optIn = page.getByLabel(/Réutiliser ma correction comme exemple/);
+  const optIn = page.getByLabel(/Réutiliser mes 1 correction/);
   await expect(optIn).toBeVisible();
 
   // Capture le corps du prochain /classement/batch.
@@ -762,7 +791,7 @@ test(" — démo en <3 clics, édition du plan en arbre, reclassement sans LLM",
       req.url().includes("/api/py/classement/batch") && req.method() === "POST",
   );
   await optIn.click(); // active la réinjection
-  await page.getByRole("button", { name: "Lancer le classement" }).click();
+  await page.getByRole("button", { name: /Relancer à l/ }).click();
 
   const body = JSON.parse((await batchWithCorrections).postData() ?? "{}");
   expect(Array.isArray(body.corrections)).toBe(true);
@@ -771,4 +800,54 @@ test(" — démo en <3 clics, édition du plan en arbre, reclassement sans LLM",
     path: "divers/note service.doc",
     targetFolder: "3_Vie_scolaire",
   });
+  // Branche « à l'identique » : aucune révision n'accompagne la relance.
+  expect(body.revision ?? null).toBeNull();
+});
+
+test(" — relance en révision : le modèle reçoit son classement précédent", async ({
+  page,
+}) => {
+  await mockBackend(page);
+  await page.goto("/");
+
+  // Parcours minimal jusqu'au classement produit (démo : 3 clics).
+  await page
+    .getByRole("button", { name: /Charger un jeu de démonstration/ })
+    .click();
+  await page.getByText("Continuer vers l'audit").click();
+  await page.getByRole("button", { name: "Lancer l'audit" }).click();
+  await expect(page.getByText("Continuer vers le classement")).toBeEnabled();
+  await page.waitForURL(/\?p=/);
+  await page.waitForTimeout(300);
+  await page.getByText("Continuer vers le classement").click();
+  await page.getByRole("button", { name: "Lancer le classement" }).click();
+  await expect(page.getByText("Rapport de couverture")).toBeVisible();
+
+  // Le classement est produit : on demande une révision plutôt qu'une relance
+  // à zéro. Un seul geste — valider le dialogue lance le tour de révision.
+  await page.getByRole("button", { name: /Relancer le classement/ }).click();
+  await page
+    .getByLabel(/Ce qu'il faut corriger/)
+    .fill("les menus vont dans 2_Cantine, pas dans 1_Eleves");
+
+  const batchWithRevision = page.waitForRequest(
+    (req) =>
+      req.url().includes("/api/py/classement/batch") && req.method() === "POST",
+  );
+  await page.getByRole("button", { name: /Réviser le classement/ }).click();
+
+  const body = JSON.parse((await batchWithRevision).postData() ?? "{}");
+  // Les consignes voyagent dans le préfixe stable…
+  expect(body.revision.turns).toEqual([
+    { consigne: "les menus vont dans 2_Cantine, pas dans 1_Eleves" },
+  ]);
+  // …et les décisions du tour précédent ligne à ligne (le moteur les reporte en
+  // colonnes PrevFolder/PrevTitle). C'est la seule copie du tour précédent.
+  expect(body.revision.previousRows.length).toBeGreaterThan(0);
+  expect(body.revision.previousRows[0]).toHaveProperty("TargetFolder");
+  // Les stats du run précédent sont renvoyées telles quelles (transport pur).
+  expect(body.revision.previousStats).not.toBeNull();
+
+  // Le résultat révisé s'annonce comme tel, avec la consigne du tour.
+  await expect(page.getByText(/Classement révisé — tour 1/)).toBeVisible();
 });

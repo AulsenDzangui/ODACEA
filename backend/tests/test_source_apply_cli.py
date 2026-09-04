@@ -1,5 +1,5 @@
 """Tests CLI — `odacea scan`, détection de dossier à l'entrée
-et `odacea apply` (N9)."""
+et `odacea apply`."""
 from __future__ import annotations
 
 import json
@@ -60,7 +60,7 @@ def test_audit_accepts_a_folder(monkeypatch, tmp_path, golden_aud):
     assert (tmp_path / "rapport.md").read_text(encoding="utf-8") == golden_aud
 
 
-# ── N9 : odacea apply ────────────────────────────────────────────────────────
+# ── odacea apply ─────────────────────────────────────────────────────────────
 
 def _resip_csv(path: Path) -> None:
     """Écrit un petit CSV RESIP (sortie de classement) canonique."""

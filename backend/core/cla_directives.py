@@ -22,7 +22,7 @@ l'ensemble des dossiers du plan sous lesquels ``convert_classement_to_resip`` do
 traiter un ``TargetFolder`` de la forme ``dossier/Nouveau_sous_dossier`` comme une
 création légitime (rattachée au bon parent), et non comme un dossier hors plan.
 
-⚠️ **Attention** — accueillir des consignes *modifie le prompt* (le modèle
+⚠️ **Contrainte** — accueillir des consignes *modifie le prompt* (le modèle
 reçoit un contenu nouveau) : ``PROMPT_VERSION`` de CLA-001 est incrémenté et
 l'**efficacité** se mesure sur modèles réels via le harnais d'évaluation (métrique
 ``directivesFollowedPct``, `core.evals`). Le présent module et son câblage

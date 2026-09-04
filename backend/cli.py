@@ -52,12 +52,19 @@ from core.apply_classement import (
 from core.audit_scan import format_digest, scan_metadata
 from core.cla_directives import allowed_parents as directives_allowed_parents
 from core.cla_directives import read_directives_file, render_directives
+from core.cla_revision import (
+    read_revision_file,
+    render_previous_synthesis,
+    render_revision,
+    turns_from_text,
+)
 from core.corrections import read_corrections_file, render_corrections_examples
 from core.csv_handler import (
     build_reference_tree_from_folders,
     classement_llm_csv,
     convert_classement_to_resip,
     csv_to_string,
+    ensure_path_column,
     extract_csv_from_response,
     extract_plans,
     parse_plan_tree,
@@ -78,6 +85,7 @@ from core.evals import (
     audit_metrics,
     classement_metrics,
     format_eval_tables,
+    revision_metrics,
 )
 from core.export_manifest import build_tree_manifest, format_tree_manifest_markdown
 from core.journal import build_journal, format_journal_markdown
@@ -200,6 +208,66 @@ def _load_directives(args) -> list:
         f"{n_anc} ancrée(s), {n_crea} autorisant la création de sous-dossiers"
     )
     return directives
+
+
+def _load_revision(args, df_original, plan_valide: str) -> dict:
+    """Révision d'un classement précédent : si `--revise-from FICHIER`
+    et/ou `--revision …` sont fournis, prépare les deux véhicules du tour de
+    révision.
+
+    - `--revise-from` : le classement précédent (CSV `Path;TargetFolder;NewTitle`
+      — **même format que `--corrections`**, donc même lecteur). Réhydraté si
+      produit en mode `Ref`, il est reporté ligne à ligne en colonnes
+      `PrevFolder`/`PrevTitle` de la liste des fichiers.
+    - `--revision` : les consignes de correction (fichier texte, une par ligne,
+      ou texte direct).
+
+    La **synthèse mesurée** du run précédent est recalculée localement — une
+    conversion RESIP à blanc, déterministe et **sans appel LLM** — pour donner les
+    mêmes compteurs que ceux dont dispose le front.
+
+    Retourne un dict `{block, previous, previousStats, turns}` ; `block` vide et
+    `previous` à None sans les flags (comportement inchangé).
+
+    ⚠️ Accueillir une révision **modifie le prompt** : efficacité à mesurer
+    sur modèles réels (métriques `revisionChangedPct` et deltas, `core.evals`)."""
+    empty: dict = {"block": "", "previous": None, "previousStats": None, "turns": []}
+    from_path = getattr(args, "revise_from", None)
+    consignes = getattr(args, "revision", None)
+    if not from_path and not consignes:
+        return empty
+
+    previous = None
+    previous_stats = None
+    synthesis = ""
+    if from_path:
+        previous = ensure_path_column(read_corrections_file(Path(from_path)), df_original)
+        try:
+            _, prev_warnings, previous_stats = convert_classement_to_resip(
+                previous, df_original, plan_valide
+            )
+            synthesis = render_previous_synthesis(previous_stats, prev_warnings)
+        except Exception as e:  # classement précédent inexploitable : on continue
+            _log(f"⚠ Synthèse du classement précédent indisponible : {e}")
+
+    turns = []
+    if consignes:
+        path = Path(consignes)
+        turns = (
+            read_revision_file(path) if path.exists() else turns_from_text(consignes)
+        )
+
+    n_prev = 0 if previous is None else len(previous)
+    _log(
+        f"✓ Révision : {len(turns)} consigne(s), "
+        f"{n_prev} décision(s) précédente(s) reportée(s)"
+    )
+    return {
+        "block": render_revision(turns, synthesis),
+        "previous": previous,
+        "previousStats": previous_stats,
+        "turns": [t.consigne for t in turns],
+    }
 
 
 def _confirm(question: str) -> bool:
@@ -392,7 +460,7 @@ def _stream_or_raise(
     chunk_count = 0
     in_thinking_block = False
 
-    # Retry B9 : visibilité immédiate de chaque nouvelle tentative sur stderr.
+    # Retry : visibilité immédiate de chaque nouvelle tentative sur stderr.
     provider.on_retry = lambda msg: _log(f"↻ {msg}")
 
     try:
@@ -1140,6 +1208,11 @@ def cmd_classement(args) -> int:
     if getattr(args, "directives", None) and not Path(args.directives).exists():
         _log(f"✗ Fichier de consignes introuvable : {args.directives}")
         return EXIT_INPUT_INVALID
+    # Révision : --revise-from désigne toujours un fichier ; --revision
+    # accepte un fichier **ou** un texte direct (donc pas de garde d'existence).
+    if getattr(args, "revise_from", None) and not Path(args.revise_from).exists():
+        _log(f"✗ Classement précédent introuvable : {args.revise_from}")
+        return EXIT_INPUT_INVALID
 
     df_original = _load_input_csv(Path(args.input))
     if getattr(args, "dry_run", False):
@@ -1176,6 +1249,8 @@ def cmd_classement(args) -> int:
         description_sent=bool(getattr(args, "description", False)),
         # `classement` part d'un plan fourni (aucun audit LLM dans cette commande).
         plan_origin="fourni",
+        # Révision — absent d'un run normal.
+        revision=summary.get("revision"),
     )
     if journal is not None:
         summary = {**summary, "journal": journal}
@@ -1210,6 +1285,9 @@ def _classement_summary(result: dict) -> dict:
         # Manifeste d'arborescence modèle — présent seulement si --manifest.
         if result.get("manifest") is not None:
             summary["manifest"] = result["manifest"]
+        # Révision — présent seulement si --revise-from/--revision.
+        if result.get("revision") is not None:
+            summary["revision"] = result["revision"]
     return summary
 
 
@@ -1285,10 +1363,16 @@ def _run_classement(*, df_original, plan_valide, out_path, args, raw_dir=None,
     plan_folder_names = set(parse_plan_tree(plan_valide))
     directives_block = render_directives(directives, plan_folder_names) if directives else ""
     allowed = directives_allowed_parents(directives, plan_folder_names) if directives else set()
+    # Révision d'un classement précédent : bloc stable (consignes +
+    # synthèse mesurée) et décisions précédentes reportées ligne à ligne. Vide
+    # sans --revise-from/--revision → prompt et entrée inchangés.
+    revision = _load_revision(args, df_original, plan_valide)
+    revision_block, previous = revision["block"], revision["previous"]
     # Avis de classement (« Démarche de l'IA ») dans le prompt — désactivable.
     system_prompt = CLA_001.build_system_prompt(
         avis=not getattr(args, "no_avis", False), ref_mode=ref_mode,
         examples=bool(examples), directives=bool(directives_block),
+        revision=bool(revision_block) or previous is not None,
     )
     # Provider construit paresseusement : une reprise intégrale (tous les lots
     # déjà sur disque) n'exige aucune configuration LLM.
@@ -1297,9 +1381,9 @@ def _run_classement(*, df_original, plan_valide, out_path, args, raw_dir=None,
 
     def _user_msg_for(df_batch) -> str:
         return CLA_001.build_user_message(
-            csv_content=classement_llm_csv(df_batch, ref_mode=ref_mode),
+            csv_content=classement_llm_csv(df_batch, ref_mode=ref_mode, previous=previous),
             plan_valide=plan_valide, ref_mode=ref_mode, examples=examples,
-            directives=directives_block,
+            directives=directives_block, revision=revision_block,
         )
 
     def _llm_response_for(df_batch, raw_name: str, label: str) -> str:
@@ -1461,6 +1545,30 @@ def _run_classement(*, df_original, plan_valide, out_path, args, raw_dir=None,
         "warnings": list(warnings_list),
         "stats": stats,
     }
+
+    # Révision : un run de révision doit être traçable **comme tel**, avec
+    # de quoi juger s'il a réparé (deltas) sans tout rebrasser (stabilité). Les
+    # chiffres sont calculés côté moteur (`core.evals`), jamais ici.
+    if revision["previous"] is not None or revision["turns"]:
+        stability = revision_metrics(
+            ensure_path_column(df_llm, df_original).to_dict("records"),
+            (revision["previous"] if revision["previous"] is not None else pd.DataFrame()).to_dict("records"),
+        )
+        base_summary["revision"] = {
+            "turns": revision["turns"],
+            "revisedFrom": getattr(args, "revise_from", None),
+            **stability,
+            **{
+                k: v
+                for k, v in classement_metrics(stats, revision["previousStats"]).items()
+                if k.startswith("revision")
+            },
+        }
+        _log(
+            "↻ Révision : "
+            f"{stability['revisionChanged']}/{stability['revisionCompared']} décision(s) "
+            f"modifiée(s) ({stability['revisionChangedPct']} %)"
+        )
 
     if interactive and not _confirm(f"› Écrire le CSV RESIP dans {out_path} ? [o/N] "):
         _log("✗ Écriture annulée (--interactive) — aucun fichier produit.")
@@ -2056,7 +2164,7 @@ def cmd_scan(args) -> int:
 
 
 def cmd_apply(args) -> int:
-    """N9 — applique physiquement le classement : copie chaque fichier du CSV RESIP
+    """Applique physiquement le classement : copie chaque fichier du CSV RESIP
     vers l'arborescence cible, sous son nouveau titre. **La source n'est jamais
     mutée** (copie seule). Aperçu obligatoire puis confirmation (sauf --yes) ;
     reprise idempotente (--resume) ; erreurs par fichier collectées."""
@@ -2152,6 +2260,17 @@ def cmd_apply(args) -> int:
     return EXIT_OK
 
 
+def cmd_serve(args) -> int:
+    """Mode tout-en-un : API + front local (export statique de `web/`) sur
+    un seul port, navigateur ouvert automatiquement. Délègue entièrement à
+    `desktop.py` (même chemin de code que l'exécutable PyInstaller empaqueté) —
+    aucune logique dupliquée ici."""
+    import desktop
+
+    desktop.run(port=args.port, open_browser=not args.no_browser, static_dir=args.static_dir)
+    return EXIT_OK
+
+
 # ── Argparse ─────────────────────────────────────────────────────────────────
 
 def _add_llm_args(p: argparse.ArgumentParser) -> None:
@@ -2163,7 +2282,7 @@ def _add_llm_args(p: argparse.ArgumentParser) -> None:
 
 def _add_config_arg(p: argparse.ArgumentParser) -> None:
     # Défaut None pour toutes les options surchargeables par odacea.toml : None =
-    # « non passé en CLI » (résolu par _apply_file_config —).
+    # « non passé en CLI » (résolu par _apply_file_config).
     p.add_argument("--config", default=None, metavar="FILE",
                    help="Fichier de configuration odacea.toml (défaut : recherché en "
                         "remontant depuis le répertoire courant). Précédence : CLI > config > .env.")
@@ -2331,6 +2450,15 @@ def build_parser() -> argparse.ArgumentParser:
                             "« consigne » seule = consigne de fonds ; marqueur « [+sous-dossiers] » = "
                             "autorise CLA-001 à créer des sous-dossiers sous le dossier visé. "
                             "Modifie le prompt.")
+    p_cla.add_argument("--revise-from", default=None, metavar="FICHIER",
+                       help="Révision : classement précédent à réviser — CSV "
+                            "Path;TargetFolder;NewTitle (même format que --corrections). Reporté "
+                            "ligne à ligne en colonnes PrevFolder/PrevTitle : le modèle corrige son "
+                            "travail au lieu de repartir de zéro. Modifie le prompt.")
+    p_cla.add_argument("--revision", default=None, metavar="FICHIER|TEXTE",
+                       help="Révision : consignes de correction — chemin d'un fichier texte "
+                            "(une consigne par ligne) ou texte direct. À combiner avec --revise-from "
+                            "pour que le modèle sache ce qu'il avait produit.")
     p_cla.add_argument("--raw-dir", default=None, metavar="DIR",
                        help="Répertoire où sauvegarder les réponses LLM brutes (une par lot) — base de la reprise --resume")
     p_cla.add_argument("--resume", action="store_true",
@@ -2356,7 +2484,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_json_arg(p_scan)
     p_scan.set_defaults(func=cmd_scan)
 
-    # apply (N9 — application physique du classement : copie vers l'arborescence cible)
+    # apply (application physique du classement : copie vers l'arborescence cible)
     p_apply = sub.add_parser(
         "apply",
         help="Appliquer physiquement le classement — copie du CSV RESIP vers l'arborescence cible (source intacte)",
@@ -2376,7 +2504,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_journal_arg(p_apply)
     p_apply.set_defaults(func=cmd_apply)
 
-    # eval (harnais d'évaluation des prompts —)
+    # eval (harnais d'évaluation des prompts)
     p_eval = sub.add_parser(
         "eval",
         help="Harnais d'évaluation des prompts — corpus × modèles, rapport JSON + tableau",
@@ -2472,6 +2600,19 @@ def build_parser() -> argparse.ArgumentParser:
     _add_manifest_arg(p_run)
     _add_folder_numbers_arg(p_run)
     p_run.set_defaults(func=cmd_run)
+
+    # serve (mode tout-en-un : API + front local, navigateur ouvert automatiquement)
+    p_serve = sub.add_parser(
+        "serve",
+        help="Mode tout-en-un : API + front local, navigateur ouvert automatiquement",
+    )
+    p_serve.add_argument("--port", type=int, default=None,
+                         help="Port d'écoute (défaut : port libre choisi par l'OS)")
+    p_serve.add_argument("--no-browser", action="store_true",
+                         help="Ne pas ouvrir le navigateur automatiquement")
+    p_serve.add_argument("--static-dir", default=None, metavar="DOSSIER",
+                         help="Dossier du front exporté à servir (défaut : détection automatique)")
+    p_serve.set_defaults(func=cmd_serve)
 
     return parser
 

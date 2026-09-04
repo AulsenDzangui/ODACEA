@@ -282,7 +282,7 @@ def test_existing_plan_path_target_unchanged_by_resolution():
     assert items["x.pdf"]["ParentID"] == rg["1-1_AD92"]["ID"]
 
 
-# ── Métrique de suivi des consignes ──────────────────────────────────────────────────────────────
+# ── Métrique ─────────────────────────────────────────────────────────────────
 
 def test_classement_metrics_surfaces_created_count():
     stats = {"foldersCreatedAuthorized": ["1-6-1_Dupont", "1-6-2_Martin"], "itemsTotal": 3}

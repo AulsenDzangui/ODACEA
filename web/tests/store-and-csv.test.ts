@@ -3,7 +3,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { stringifyCsv } from "@/lib/csv/parse";
-import { useWizard, type ProjectSnapshot } from "@/lib/store";
+import { MAX_REVISION_TURNS, useWizard, type ProjectSnapshot } from "@/lib/store";
 
 // ── stringifyCsv ─────────────────────────────────────────────────────────────
 
@@ -137,6 +137,80 @@ describe("useWizard.adoptPlan (plan fourni sans audit)", () => {
   it("setAuditResult marque l'origine « audit_llm » quand un plan est produit", () => {
     useWizard.getState().setAuditResult("# R", "", "plan → 1_X/", "n");
     expect(useWizard.getState().planOrigin).toBe("audit_llm");
+  });
+});
+
+describe("useWizard.armRevision (révision du classement)", () => {
+  const rows = [{ Path: "a.pdf", TargetFolder: "1_A", NewTitle: "A.pdf" }];
+  const resip = {
+    rows: [],
+    columns: [],
+    warnings: ["un avertissement"],
+    stats: { planParsed: true, planMatches: false, itemsTotal: 1 },
+  } as unknown as Parameters<
+    ReturnType<typeof useWizard.getState>["setClassementResult"]
+  >[2];
+
+  beforeEach(() => {
+    useWizard.getState().reset();
+  });
+
+  it("capture le classement courant avant qu'il ne soit effacé par la relance", () => {
+    useWizard.getState().setClassementResult("brut", "pensées", resip, rows);
+    useWizard.getState().armRevision("les CV dans 1-2");
+    // La relance efface le résultat : le baseline devient la seule copie.
+    useWizard.getState().setClassementResult("", "", null, null);
+
+    const s = useWizard.getState();
+    expect(s.revisionBaseline?.rows).toEqual(rows);
+    expect(s.revisionBaseline?.itemCount).toBe(1);
+    expect(s.revisionBaseline?.warnings).toEqual(["un avertissement"]);
+    expect(s.revisionBaseline?.stats?.itemsTotal).toBe(1);
+    expect(s.classementRevisions.map((t) => t.consigne)).toEqual(["les CV dans 1-2"]);
+  });
+
+  it("empile les tours successifs, le tour courant en dernier", () => {
+    useWizard.getState().setClassementResult("brut", "", resip, rows);
+    useWizard.getState().armRevision("tour 1");
+    useWizard.getState().armRevision("tour 2");
+    expect(
+      useWizard.getState().classementRevisions.map((t) => t.consigne),
+    ).toEqual(["tour 1", "tour 2"]);
+  });
+
+  it("borne l'historique : la conversation compactée ne dérive pas", () => {
+    useWizard.getState().setClassementResult("brut", "", resip, rows);
+    for (let i = 0; i < MAX_REVISION_TURNS + 4; i++) {
+      useWizard.getState().armRevision(`tour ${i}`);
+    }
+    const turns = useWizard.getState().classementRevisions;
+    expect(turns).toHaveLength(MAX_REVISION_TURNS);
+    expect(turns[0].consigne).toBe("tour 4"); // les plus anciens tombent
+    expect(turns.at(-1)?.consigne).toBe(`tour ${MAX_REVISION_TURNS + 3}`);
+  });
+
+  it("sans classement courant, conserve le baseline déjà armé (run interrompu)", () => {
+    useWizard.getState().setClassementResult("brut", "", resip, rows);
+    useWizard.getState().armRevision("tour 1");
+    useWizard.getState().setClassementResult("", "", null, null); // run interrompu
+    useWizard.getState().armRevision("tour 2");
+    // Le baseline du tour 1 n'a pas été écrasé par du vide.
+    expect(useWizard.getState().revisionBaseline?.rows).toEqual(rows);
+  });
+
+  it("clearRevision désarme et vide l'historique (relance à l'identique)", () => {
+    useWizard.getState().setClassementResult("brut", "", resip, rows);
+    useWizard.getState().armRevision("tour 1");
+    useWizard.getState().clearRevision();
+    expect(useWizard.getState().revisionBaseline).toBeNull();
+    expect(useWizard.getState().classementRevisions).toEqual([]);
+  });
+
+  it("une consigne vide n'ajoute pas de tour", () => {
+    useWizard.getState().setClassementResult("brut", "", resip, rows);
+    useWizard.getState().armRevision("   ");
+    expect(useWizard.getState().classementRevisions).toEqual([]);
+    expect(useWizard.getState().revisionBaseline?.rows).toEqual(rows);
   });
 });
 

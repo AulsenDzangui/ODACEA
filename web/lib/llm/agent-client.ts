@@ -7,7 +7,7 @@
 // Le tour de chat (`POST /agt/chat`, SSE) passe par `streamSse` directement
 // (événements `tool`/`toolResult` via `StreamCallbacks.onTool`).
 
-import { postJson, ApiError } from "@/lib/llm/client-stream";
+import { postJson, ApiError, API_BASE } from "@/lib/llm/client-stream";
 
 export type AgentSessionCreated = {
   sessionId: string;
@@ -51,7 +51,7 @@ export async function createAgentSession(
 }
 
 export async function deleteAgentSession(sessionId: string): Promise<void> {
-  await fetch(`/api/py/agt/session/${encodeURIComponent(sessionId)}`, {
+  await fetch(`${API_BASE}/agt/session/${encodeURIComponent(sessionId)}`, {
     method: "DELETE",
     // Suppression best-effort (départ de page) : une session expirée ou un
     // backend éteint ne doivent pas produire d'erreur visible.
@@ -66,7 +66,7 @@ export async function resetAgentConversation(
   sessionId: string,
 ): Promise<{ reset: boolean }> {
   const res = await fetch(
-    `/api/py/agt/session/${encodeURIComponent(sessionId)}/history`,
+    `${API_BASE}/agt/session/${encodeURIComponent(sessionId)}/history`,
     { method: "DELETE" },
   );
   const data = (await res.json()) as {

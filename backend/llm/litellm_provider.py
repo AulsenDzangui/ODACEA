@@ -181,19 +181,25 @@ def _log_request(model: str, system_prompt: str, user_message: str) -> None:
     # données / pas d'écriture disque sur l'hébergement éphémère).
     if os.getenv("DEMO_MODE", "0").strip().lower() in ("1", "true", "yes", "on"):
         return
-    os.makedirs("logs", exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    path = f"logs/llm_{timestamp}.log"
-    sep = "=" * 80
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(
-            f"{sep}\n"
-            f"[{datetime.now().isoformat(timespec='seconds')}] MODEL: {model}\n"
-            f"{sep}\n"
-            f"--- SYSTEM ({len(system_prompt)} chars) ---\n{system_prompt}\n\n"
-            f"--- USER ({len(user_message)} chars) ---\n{user_message}\n"
-            f"{sep}\n"
-        )
+    # Purement diagnostique : une erreur d'écriture ici (répertoire courant en
+    # lecture seule, disque plein…) ne doit jamais faire échouer l'appel LLM
+    # réel qui l'entoure.
+    try:
+        os.makedirs("logs", exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        path = f"logs/llm_{timestamp}.log"
+        sep = "=" * 80
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(
+                f"{sep}\n"
+                f"[{datetime.now().isoformat(timespec='seconds')}] MODEL: {model}\n"
+                f"{sep}\n"
+                f"--- SYSTEM ({len(system_prompt)} chars) ---\n{system_prompt}\n\n"
+                f"--- USER ({len(user_message)} chars) ---\n{user_message}\n"
+                f"{sep}\n"
+            )
+    except OSError:
+        pass
 
 
 class LiteLLMProvider(LLMProvider):
@@ -241,7 +247,7 @@ class LiteLLMProvider(LLMProvider):
         boucle, qui renvoie l'erreur au modèle si elle est invalide). Sans
         ``tools`` (repli JSON des petits modèles locaux), c'est une complétion
         ordinaire. Non streamé : un pas d'agent est court (un appel d'outil ou
-        une réponse) ; l'usage réel est exposé sur ``last_usage``. Retry B9 sur
+        une réponse) ; l'usage réel est exposé sur ``last_usage``. Retry sur
         erreur transitoire (l'appel est sans effet de bord, rejouable).
         """
         self.last_usage = None

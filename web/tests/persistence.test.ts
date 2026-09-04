@@ -67,7 +67,7 @@ beforeEach(() => {
   (window.localStorage as unknown as MemoryStorage).clear();
 });
 
-describe("export / import projet (D9)", () => {
+describe("export / import projet", () => {
   it("round-trip : un projet exporté se réimporte sous un nom libre", () => {
     const stem = saveProject("Mon fonds", snapshot());
     const { filename, json } = exportProjectJson(stem);
@@ -111,6 +111,39 @@ describe("export / import projet (D9)", () => {
       { text: "un sous-dossier par employeur", folder: "1_A", allowCreation: true },
       { text: "nommer en français", allowCreation: false },
     ]);
+  });
+
+  it("conserve une révision armée à travers l'export/import", () => {
+    // Le baseline est la **seule** copie du tour précédent une fois la relance
+    // partie : le perdre à l'export rendrait la révision irrejouable.
+    const snap = {
+      ...snapshot(),
+      classementRevisions: [{ consigne: "les CV dans 1-2", at: "2026-07-30T10:00:00Z" }],
+      revisionBaseline: {
+        rows: [{ Path: "a.pdf", TargetFolder: "1_A", NewTitle: "A.pdf" }],
+        stats: null,
+        warnings: ["un avertissement"],
+        itemCount: 1,
+      },
+    } as Parameters<typeof saveProject>[1];
+    const stem = saveProject("Fonds révisé", snap);
+    const { json } = exportProjectJson(stem);
+    const { stem: newStem } = importProjectJson(json);
+    const reloaded = loadProject(newStem);
+    expect(reloaded?.classementRevisions).toEqual([
+      { consigne: "les CV dans 1-2", at: "2026-07-30T10:00:00Z" },
+    ]);
+    expect(reloaded?.revisionBaseline?.rows).toEqual([
+      { Path: "a.pdf", TargetFolder: "1_A", NewTitle: "A.pdf" },
+    ]);
+    expect(reloaded?.revisionBaseline?.itemCount).toBe(1);
+  });
+
+  it("un projet d'avant la révision se relit sans révision armée", () => {
+    const stem = saveProject("Fonds ancien", snapshot());
+    const reloaded = loadProject(stem);
+    expect(reloaded?.classementRevisions).toBeUndefined();
+    expect(reloaded?.revisionBaseline).toBeUndefined();
   });
 
   it("rejette un fichier qui n'est pas un export ODACEA", () => {
@@ -172,7 +205,7 @@ describe("préférences UI de traitement (lots)", () => {
   });
 });
 
-describe("estimateStorageUsage (D9)", () => {
+describe("estimateStorageUsage", () => {
   it("croît avec le contenu stocké et reste borné", () => {
     expect(estimateStorageUsage().bytes).toBe(0);
     saveProject("Projet", snapshot());

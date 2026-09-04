@@ -1,10 +1,15 @@
-// Client du backend Python (FastAPI), proxifié via /api/py/* (rewrites Next).
-// Deux helpers : postJson (endpoints synchrones) et streamSse (endpoints SSE).
+// Client du backend Python (FastAPI), proxifié via /api/py/* (Route Handler,
+// cf. app/api/py/[...path]/route.ts). Deux helpers : postJson (endpoints
+// synchrones) et streamSse (endpoints SSE).
 //
 // Protocole SSE : chaque message est une ligne `data: {json}` avec un champ
 // `type` ∈ reasoning | text | progress | done | error.
-
-export const API_BASE = "/api/py";
+//
+// NEXT_PUBLIC_API_BASE (posé à "" par le build du mode tout-en-un) bascule
+// sur un appel same-origin direct au FastAPI qui sert aussi les assets — plus
+// de proxy Node en export statique. Absent partout ailleurs → comportement
+// inchangé.
+export const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "/api/py";
 
 export type LlmUsage = {
   inputTokens?: number;
@@ -477,7 +482,7 @@ export type Progress = {
 };
 
 /** Appel d'outil de l'agent : `call` à l'émission (`tool`),
- *  `result` au retour (`toolResult`). Transparence — le front affiche les
+ * `result` au retour (`toolResult`). Transparence — le front affiche les
  *  deux tels quels (arguments et résultat opaques, construits côté moteur). */
 export type ToolEvent = {
   kind: "call" | "result";

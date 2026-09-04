@@ -70,12 +70,21 @@
   --graphite-700: #27272A;
   --graphite-600: #3F3F46;
   --graphite-100: #E4E4E7;
-  /* « Info » volontairement neutre (graphite teinté) — pas de bleu sémantique.
-     Le fond proche de paper-100 demande une hairline pour se détacher du canvas. */
-  --info-100: #F7F7F8;  /* fond d'alerte info (= paper-100) */
-  --info-300: #ECECEF;  /* bordure hairline de l'alerte info (= ink-100) */
-  --info-500: #3F3F46;  /* icône / accent (= graphite-600) */
-  --info-700: #1F1F22;  /* texte sur fond info (= ink-800) */
+  /* Couleur de marque — indigo institutionnel. Seule teinte hors gris/sémantique ;
+     pilote --primary (CTA) et --info-* (« Info » n'a plus besoin d'être neutre
+     maintenant qu'une couleur de marque existe). Nommée « brand » et non « accent »
+     pour ne pas se confondre avec le token shadcn --accent (fond de survol neutre
+     des menus, sans rapport). */
+  --brand-50: #EEF2FF;
+  --brand-100: #E0E7FF;
+  --brand-500: #6366F1;
+  --brand-600: #4F46E5;
+  --brand-700: #4338CA;
+  /* « Info » = couleur de marque (indigo), réutilisée comme signal informatif. */
+  --info-100: var(--brand-100);
+  --info-300: #C7D2FE;  /* hairline légèrement plus soutenue que le fond */
+  --info-500: var(--brand-500);
+  --info-700: var(--brand-700);
   --success-100: #DCFCE7;
   --success-500: #16A34A;
   --success-700: #166534;
@@ -94,7 +103,7 @@
   --card-foreground: var(--ink-900);
   --popover: var(--paper-50);
   --popover-foreground: var(--ink-900);
-  --primary: var(--graphite-700);
+  --primary: var(--brand-700);
   --primary-foreground: #FFFFFF;
   --secondary: var(--paper-100);
   --secondary-foreground: var(--ink-900);
@@ -143,10 +152,15 @@
   --graphite-700: #A8A8B4;
   --graphite-600: #78788A;
   --graphite-100: #2A2A34;
-  --info-100: var(--paper-75);
-  --info-300: var(--ink-100);
-  --info-500: var(--ink-600);
-  --info-700: var(--ink-800);
+  --brand-50: #1E1B4B;
+  --brand-100: #312E81;
+  --brand-500: #818CF8;
+  --brand-600: #A5B4FC;
+  --brand-700: #C7D2FE;
+  --info-100: var(--brand-100);
+  --info-300: #3730A3;  /* hairline légèrement plus soutenue que le fond */
+  --info-500: var(--brand-500);
+  --info-700: var(--brand-700);
   --success-100: #0A2E14;
   --success-500: #4ADE80;
   --success-700: #86EFAC;
@@ -165,7 +179,7 @@
   --card-foreground: var(--ink-900);
   --popover: var(--paper-100);
   --popover-foreground: var(--ink-900);
-  --primary: var(--ink-800);
+  --primary: var(--brand-500);
   --primary-foreground: var(--paper-50);
   --secondary: var(--paper-200);
   --secondary-foreground: var(--ink-900);
@@ -280,8 +294,8 @@
     border: none;
   }
   .odacea-step-active {
-    color: var(--ink-900);
-    background: var(--ink-100);
+    color: var(--brand-700);
+    background: var(--brand-100);
     cursor: default;
   }
   .odacea-step-done {
@@ -314,7 +328,7 @@
 
 }
 
-/* ── Export PDF imprimable (D6) ─────────────────────────────────────────────
+/* ── Export PDF imprimable ─────────────────────────────────────────────
    Le rapport imprimable (#odacea-print-root) est masqué à l'écran (.hidden) et
    révélé en `print:block`. À l'impression, on neutralise la coquille applicative
    par visibilité (et non display) pour ne pas perturber la mise en page, puis on

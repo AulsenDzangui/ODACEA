@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from collections.abc import Iterable, Mapping
 
 import pandas as pd
 
@@ -255,15 +256,71 @@ def audit_metrics(report: str, scan: dict | None = None, brief: bool = False) ->
     return metrics
 
 
-def classement_metrics(stats: dict) -> dict:
+def revision_metrics(
+    llm_rows: Iterable[Mapping[str, object]],
+    previous_rows: Iterable[Mapping[str, object]],
+) -> dict:
+    """Stabilité d'une **révision** : quelle part du classement le modèle
+    a-t-il touchée ?
+
+    Une révision ciblée doit être **basse** (« corrige les CV » ne déplace que les
+    CV) ; une valeur proche de 100 % signale que le modèle a tout rebrassé et
+    défait un travail déjà validé — l'échec type que cette métrique existe pour
+    attraper. Rapproché ligne à ligne sur `Path` ; un item absent du tour
+    précédent (nouveau ou non classé alors) est compté à part, jamais comme un
+    changement (il n'y avait rien à changer).
+
+    Déterministe, sans LLM. Les deux jeux de lignes doivent déjà porter `Path`
+    (cf. `csv_handler.ensure_path_column` pour un run en mode `Ref`).
+    """
+    def _index(rows: Iterable[Mapping[str, object]]) -> dict[str, tuple[str, str]]:
+        out: dict[str, tuple[str, str]] = {}
+        for row in rows:
+            path = str(row.get("Path") or "").strip()
+            if not path:
+                continue
+            out[path] = (
+                str(row.get("TargetFolder") or "").strip(),
+                str(row.get("NewTitle") or "").strip(),
+            )
+        return out
+
+    current = _index(llm_rows)
+    previous = _index(previous_rows)
+    compared = folder_changed = title_changed = changed = 0
+    for path, (folder, title) in current.items():
+        before = previous.get(path)
+        if before is None:
+            continue
+        compared += 1
+        moved = folder != before[0]
+        renamed = title != before[1]
+        folder_changed += int(moved)
+        title_changed += int(renamed)
+        changed += int(moved or renamed)
+    return {
+        "revisionCompared": compared,
+        "revisionNotInPrevious": len(current) - compared,
+        "revisionChanged": changed,
+        "revisionChangedPct": round(100 * changed / compared, 1) if compared else None,
+        "revisionFolderChanged": folder_changed,
+        "revisionTitleChanged": title_changed,
+    }
+
+
+def classement_metrics(stats: dict, previous_stats: dict | None = None) -> dict:
     """Agrège les compteurs CLA-001 renvoyés par `convert_classement_to_resip`.
 
     Passe-plat volontaire (les compteurs sont calculés à la source, jamais
     re-dérivés des messages d'avertissement) + taux dérivés.
+
+    ``previous_stats`` : les mêmes compteurs pour le run **précédent** →
+    ajoute les **deltas de révision** (négatif = la révision a réparé). Absent ⇒
+    métriques inchangées.
     """
     total = int(stats.get("itemsTotal") or 0)
     classified = int(stats.get("itemsClassified") or 0)
-    return {
+    metrics = {
         "planParsed": bool(stats.get("planParsed")),
         "planMatches": bool(stats.get("planMatches")),
         "foldersOffPlan": len(stats.get("foldersOffPlan") or []),
@@ -282,6 +339,15 @@ def classement_metrics(stats: dict) -> dict:
         # non-régression (doit valoir 0 pour un run sans consigne d'autorisation).
         "foldersCreated": len(stats.get("foldersCreatedAuthorized") or []),
     }
+    if previous_stats:
+        for key, getter in (
+            ("revisionFoldersMissingDelta", lambda s: len(s.get("foldersMissing") or [])),
+            ("revisionOffPlanDelta", lambda s: len(s.get("foldersOffPlan") or [])),
+            ("revisionUnclassifiedDelta", lambda s: int(s.get("itemsUnclassified") or 0)),
+            ("revisionMalformedDelta", lambda s: int(s.get("itemsMalformed") or 0)),
+        ):
+            metrics[key] = getter(stats) - getter(previous_stats)
+    return metrics
 
 
 def _resip_ancestry(rows: list[dict]) -> tuple[dict[str, str], dict[str, str]]:

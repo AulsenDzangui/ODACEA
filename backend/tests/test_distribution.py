@@ -80,3 +80,4 @@ def test_env_example_documents_keys():
     for key in ("DEFAULT_MODEL", "ODACEA_WEB_PORT", "DEMO_MODE"):
         assert key in env
 
+

@@ -1,9 +1,9 @@
-"""Tests d'intégration du backend HTTP FastAPI (`api/`) — B2 (+ garde).
+"""Tests d'intégration du backend HTTP FastAPI (`api/`) — avec tests de garde.
 
 TestClient + provider LLM mocké (FakeProvider, cf. conftest) : on vérifie les
 contrats JSON, le format des événements SSE (reasoning/text/progress/done/
 error), la taxonomie d'erreurs, les limites et la garde d'annulation
-B8 (fermeture du générateur → arrêt de l'itération LiteLLM, remboursement de
+(fermeture du générateur → arrêt de l'itération LiteLLM, remboursement de
 la réservation démo).
 """
 import json
@@ -15,6 +15,7 @@ from api import demo_limits, engine
 from api.main import app
 from api.schemas import AuditRequest, ClassementBatchRequest
 from config import settings
+from prompts import CLA_001
 from tests.conftest import FakeProvider
 
 client = TestClient(app)
@@ -346,6 +347,71 @@ def test_classement_batch_no_directives_prompt_unchanged(monkeypatch, small_csv_
     })
     system_prompt, user_msg = provider.calls[-1]
     assert "# Consignes de classement de l'archiviste" not in system_prompt
+
+
+def test_classement_batch_revision_injects_channel(monkeypatch, small_csv_text,
+                                                   golden_cla_path, plan_valide):
+    """Une révision passée à /classement/batch ouvre le canal (système),
+    insère consignes + synthèse dans le préfixe caché, et reporte les décisions
+    précédentes ligne à ligne dans la liste des fichiers."""
+    provider = FakeProvider(response=golden_cla_path)
+    monkeypatch.setattr(engine, "get_provider", lambda **kw: provider)
+    client.post("/classement/batch", json={
+        "csv": small_csv_text, "planValide": plan_valide, "model": "m",
+        "revision": {
+            "turns": [{"consigne": "les menus vont dans 2_Cantine"}],
+            "previousRows": [
+                {"Path": "cantine/menu.pdf", "TargetFolder": "1_Eleves", "NewTitle": "Menu.pdf"},
+            ],
+            "previousStats": {
+                "itemsTotal": 6, "itemsClassified": 5, "itemsUnclassified": 1,
+                "foldersMissing": ["2_Cantine"],
+            },
+            "previousWarnings": ["un avertissement"],
+        },
+    })
+    system_prompt, user_msg = provider.calls[-1]
+    assert "# Révision d'un classement précédent" in system_prompt
+    assert "les menus vont dans 2_Cantine" in user_msg
+    assert "`2_Cantine`" in user_msg  # synthèse : dossier resté vide
+    # Bloc stable AVANT la frontière de cache, décisions ligne à ligne après.
+    boundary = user_msg.index(CLA_001.CACHE_BOUNDARY)
+    assert user_msg.index("les menus vont dans 2_Cantine") < boundary
+    assert "PrevFolder;PrevTitle" in user_msg[boundary:]
+
+
+def test_classement_batch_revision_without_previous_rows_keeps_input_clean(
+    monkeypatch, small_csv_text, golden_cla_path, plan_valide
+):
+    """Consignes seules (sans classement précédent) : le canal s'ouvre mais aucune
+    colonne `Prev…` n'est inventée."""
+    provider = FakeProvider(response=golden_cla_path)
+    monkeypatch.setattr(engine, "get_provider", lambda **kw: provider)
+    client.post("/classement/batch", json={
+        "csv": small_csv_text, "planValide": plan_valide, "model": "m",
+        "revision": {"turns": [{"consigne": "revoir les titres"}]},
+    })
+    system_prompt, user_msg = provider.calls[-1]
+    assert "# Révision d'un classement précédent" in system_prompt
+    assert "PrevFolder" not in user_msg
+
+
+def test_classement_batch_no_revision_prompt_unchanged(monkeypatch, small_csv_text,
+                                                       golden_cla_path, plan_valide):
+    provider = FakeProvider(response=golden_cla_path)
+    monkeypatch.setattr(engine, "get_provider", lambda **kw: provider)
+    client.post("/classement/batch", json={
+        "csv": small_csv_text, "planValide": plan_valide, "model": "m",
+    })
+    system_prompt, user_msg = provider.calls[-1]
+    assert "# Révision d'un classement précédent" not in system_prompt
+    assert "PrevFolder" not in user_msg
+    # Un objet `revision` vide est traité comme une absence de révision.
+    client.post("/classement/batch", json={
+        "csv": small_csv_text, "planValide": plan_valide, "model": "m",
+        "revision": {"turns": [], "previousRows": []},
+    })
+    assert provider.calls[-1] == (system_prompt, user_msg)
 
 
 def test_classement_finalize_creates_authorized_subfolder(small_csv_text, plan_valide):

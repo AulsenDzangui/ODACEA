@@ -35,9 +35,23 @@ def test_console_script_declared(pyproject):
     assert scripts["odacea"] == "cli:main"
 
 
+def test_desktop_console_script_declared(pyproject):
+    # Mode tout-en-un : second point d'entrée console, même contrat que
+    # `odacea`. Cible aussi utilisée telle quelle par PyInstaller
+    # (odacea_desktop.spec).
+    scripts = pyproject["project"]["scripts"]
+    assert scripts["odacea-desktop"] == "desktop:main"
+
+
 def test_entry_point_target_callable():
     # La cible du script doit exister et accepter argv (renvoie un code EXIT_*).
     assert callable(cli.main)
+
+
+def test_desktop_entry_point_target_callable():
+    import desktop
+
+    assert callable(desktop.main)
 
 
 def test_packages_explicit_no_tests(pyproject):
@@ -46,7 +60,9 @@ def test_packages_explicit_no_tests(pyproject):
     # (evals/, demo_assets/) ne doivent être embarqués comme paquets.
     assert set(packages) == {"api", "config", "core", "llm", "prompts"}
     assert "tests" not in packages
-    assert pyproject["tool"]["setuptools"]["py-modules"] == ["cli"]
+    # `desktop` est le point d'entrée du mode tout-en-un — module « à
+    # plat » au même titre que `cli`, ni test ni donnée.
+    assert pyproject["tool"]["setuptools"]["py-modules"] == ["cli", "desktop"]
 
 
 def test_runtime_deps_cover_cli(pyproject):

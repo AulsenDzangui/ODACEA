@@ -1,6 +1,6 @@
 import type { FolderTree } from "./types";
 
-// ── Copie miroir documentée ───────────────────────────────────────
+// ── Copie miroir documentée (décision) ───────────────────────────────────────
 // Le parsing de l'arborescence technique (arborescenceBlock, parsePlanTree)
 // duplique volontairement `backend/core/csv_handler.py` (`_arborescence_block`,
 // `parse_plan_tree`). Raison : l'aperçu de l'arbre doit se re-rendre en direct

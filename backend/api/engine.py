@@ -53,12 +53,18 @@ from core.cla_directives import (
     directives_from_rows,
     render_directives,
 )
+from core.cla_revision import (
+    render_previous_synthesis,
+    render_revision,
+    turns_from_rows,
+)
 from core.corrections import corrections_from_rows, render_corrections_examples
 from core.csv_handler import (
     build_reference_tree_from_folders,
     classement_llm_csv,
     convert_classement_to_resip,
     csv_to_string,
+    ensure_path_column,
     extract_csv_from_response,
     extract_plans,
     parse_plan_tree,
@@ -531,7 +537,7 @@ def audit_stream(
             brief=req.brief,
         )
         provider = get_provider(model=req.model, api_key=req.api_key, base_url=req.base_url)
-        # Retry B9 : le callback alimente une file, émise en `notice` SSE au fil
+        # Retry : le callback alimente une file, émise en `notice` SSE au fil
         # du flux (et après coup si la tentative suivante aboutit d'emblée).
         retry_notices: list[str] = []
         provider.on_retry = retry_notices.append
@@ -738,7 +744,7 @@ def apply_stream(req) -> Iterator[str]:
     """Exécute l'application physique du classement en SSE (backend local
     uniquement). Événements `progress` (copiés/total/fichier courant) puis
     `done{stats}`. Erreurs par fichier **collectées sans interrompre** le run.
-    La **source n'est jamais mutée** (copie seule). Annulation B8 : à la
+    La **source n'est jamais mutée** (copie seule). **Annulation** : à la
     déconnexion, Starlette ferme le générateur (la copie en cours s'achève, aucune
     suivante n'est lancée — pas d'état corrompu)."""
     if not req.confirm:
@@ -877,7 +883,7 @@ def agt_conversation_reset(session_id: str) -> dict:
 def agt_chat_stream(req: AgtChatRequest) -> Iterator[str]:
     """Un tour de dialogue avec l'agent, en SSE. Événements : `tool` /
     `toolResult` (transparence des appels d'outils), `text` (réponse),
-    `notice` (retry B9), puis `done{answer, steps, usage, usageSession,
+    `notice` (retry), puis `done{answer, steps, usage, usageSession,
     toolMode, promptVersion, model}`. Le CSV ne transite jamais dans un prompt :
     le modèle ne voit que le digest et les résultats d'outils."""
     try:
@@ -956,9 +962,15 @@ def agt_chat_stream(req: AgtChatRequest) -> Iterator[str]:
 
 # ── Classement (CLA-001) : prepare / batch / finalize ────────────────────────
 
-def _classement_items(csv: str, prep: PrepOptions) -> pd.DataFrame:
+def _classement_items(csv: str, prep: PrepOptions) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Renvoie `(df_original, items)`. Le CSV source est conservé : la révision
+ en a besoin pour réhydrater `Ref→Path` sur le classement précédent,
+    et le re-parser une seconde fois serait un gaspillage sur un gros vrac."""
     df_original = parse_csv_text(csv)
-    return prepare_for_classement(df_original, include_description=prep.include_description)
+    items = prepare_for_classement(
+        df_original, include_description=prep.include_description
+    )
+    return df_original, items
 
 
 def classement_prepare(req: ClassementPrepareRequest) -> dict:
@@ -1006,7 +1018,7 @@ def classement_batch_stream(
     committed = False
     try:
         try:
-            items = _classement_items(req.csv, req.prep)
+            df_original, items = _classement_items(req.csv, req.prep)
         except CsvLimitError as e:
             yield sse.error(str(e), code="csv_too_large", hint=e.hint)
             return
@@ -1036,12 +1048,30 @@ def classement_batch_stream(
             directives_from_rows(d.model_dump() for d in req.directives),
             set(parse_plan_tree(req.plan_valide)),
         ) if req.directives else ""
+        # Révision : le préfixe stable porte les consignes de correction +
+        # la synthèse mesurée du run précédent (constants d'un lot à l'autre, donc
+        # mis en cache) ; les décisions ligne à ligne, elles, rejoignent la liste
+        # des fichiers en colonnes `PrevFolder`/`PrevTitle`. Absent ⇒ inchangé.
+        revision_block = ""
+        previous = None
+        if req.revision is not None and (req.revision.turns or req.revision.previous_rows):
+            if req.revision.previous_rows:
+                previous = ensure_path_column(
+                    pd.DataFrame(req.revision.previous_rows).astype(str), df_original
+                )
+            revision_block = render_revision(
+                turns_from_rows(t.model_dump() for t in req.revision.turns),
+                render_previous_synthesis(
+                    req.revision.previous_stats, req.revision.previous_warnings
+                ),
+            )
         user_msg = CLA_001.build_user_message(
-            csv_content=classement_llm_csv(batch, ref_mode=ref_mode),
+            csv_content=classement_llm_csv(batch, ref_mode=ref_mode, previous=previous),
             plan_valide=req.plan_valide,
             ref_mode=ref_mode,
             examples=examples,
             directives=directives_block,
+            revision=revision_block,
         )
         provider = get_provider(model=req.model, api_key=req.api_key, base_url=req.base_url)
         retry_notices: list[str] = []
@@ -1057,6 +1087,10 @@ def classement_batch_stream(
                 avis=req.prep.classement_avis, ref_mode=ref_mode,
                 examples=bool(examples),
                 directives=bool(directives_block),
+                # Dès que l'un des deux véhicules de la révision est présent : la
+                # consigne système explique *les deux* (colonnes `Prev…` + règle
+                # de stabilité), elles ne doivent jamais voyager sans elle.
+                revision=bool(revision_block) or previous is not None,
             )
             for is_thinking, chunk in provider.stream_with_reasoning(
                 system_prompt, user_msg, cache_user_boundary=CLA_001.CACHE_BOUNDARY

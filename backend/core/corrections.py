@@ -13,7 +13,7 @@ de l'archiviste pour AUD-001.
 (`NewTitle`) — jamais le contenu d'un document. C'est exactement le format de
 sortie de CLA-001 (donc d'une correction). Garde-fou testé.
 
-⚠️ **Attention** — injecter des exemples *modifie le prompt* (le modèle
+⚠️ **Contrainte** — injecter des exemples *modifie le prompt* (le modèle
 reçoit un contenu nouveau). L'**efficacité** de ce few-shot se mesure sur modèles
 réels via le harnais d'évaluation (expérience (a) du `evals/README.md`). Le présent
 module et son câblage (CLI/API) sont **déterministes et testés sans LLM** ;

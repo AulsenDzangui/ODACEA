@@ -54,6 +54,7 @@ import { PlanTree } from "@/components/plan-tree";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { IconAction } from "@/components/wizard/icon-action";
 import { StepActions } from "@/components/wizard/step-actions";
+import { AdvancedSection } from "@/components/wizard/advanced-section";
 import {
   AlertCircle,
   AlertTriangle,
@@ -75,6 +76,7 @@ import {
   Layers,
   GitCompare,
   Check,
+  Sliders,
 } from "lucide-react";
 
 // Audit comparatif multi-plans : nombre de propositions de plan que
@@ -598,7 +600,7 @@ export function StepAudit() {
                     {v.uniqueFolders.map((f) => (
                       <span
                         key={f}
-                        className="rounded bg-(--accent-100) px-1.5 py-0.5 text-xs text-(--accent-700)"
+                        className="rounded bg-(--brand-100) px-1.5 py-0.5 text-xs text-(--brand-700)"
                       >
                         {f}
                       </span>
@@ -683,6 +685,18 @@ export function StepAudit() {
           </div>
         </div>
 
+        {/* Options avancées de l'audit — divulgation progressive : le chemin
+            simple par défaut est « note + Lancer l'audit » ; le plan de
+            référence, le mode plan seul et les propositions multiples
+ sont des réglages de l'appel LLM, regroupés et repliés par
+            défaut. Rouvert automatiquement si l'un d'eux est déjà configuré,
+            pour ne jamais masquer un réglage actif (même pattern que les
+            consignes de classement, step-classement.tsx). */}
+        <AdvancedSection
+          title="Options avancées de l'audit"
+          icon={Sliders}
+          defaultOpen={!!referencePlan || briefMode || variantCount > 1}
+        >
         <div className="space-y-2 rounded-md border border-(--ink-100) bg-(--paper-50) p-3">
           <Label className="flex items-center gap-1.5">
             <Library className="h-4 w-4" />
@@ -702,7 +716,7 @@ export function StepAudit() {
                 data-testid="reference-plan-dropzone"
                 className={`flex cursor-pointer flex-col items-center justify-center gap-1 rounded-md border border-dashed p-4 text-center text-xs transition-colors ${
                   isRefDragActive
-                    ? "border-(--accent-500) bg-(--accent-50)"
+                    ? "border-(--brand-500) bg-(--brand-50)"
                     : "border-(--ink-200) hover:border-(--ink-300)"
                 } ${auditRunning || refLoading ? "pointer-events-none opacity-60" : ""}`}
               >
@@ -753,7 +767,7 @@ export function StepAudit() {
             <>
               <div className="flex items-center justify-between gap-2">
                 <span className="flex items-center gap-1.5 text-xs text-(--ink-600)">
-                  <Check className="h-3.5 w-3.5 text-(--accent-600)" />
+                  <Check className="h-3.5 w-3.5 text-(--brand-600)" />
                   {referencePlanName || "Plan de référence"} — {refFolderCount}{" "}
                   dossier{refFolderCount > 1 ? "s" : ""}
                 </span>
@@ -891,17 +905,14 @@ export function StepAudit() {
             </SelectContent>
           </Select>
         </div>
+        </AdvancedSection>
 
         {/* ── Workflow parallèle (optionnel) : adopter un plan sans audit ───────
-            Mis à part des réglages de l'audit ci-dessus (même traitement visuel
-            que « Pour aller plus loin » côté classement) : c'est un chemin
-            alternatif — l'archiviste apporte son propre plan, l'audit est
-            court-circuité. ─────────────────────────────────────────────── */}
-        <Separator />
-        <div className="space-y-2">
-          <p className="text-xs font-medium tracking-wide text-(--ink-400) uppercase">
-            Vous avez déjà un plan&nbsp;?
-          </p>
+            Distinct des réglages de l'audit ci-dessus : ce n'est pas un
+            paramètre de l'appel LLM mais un chemin alternatif qui le
+            court-circuite — l'archiviste apporte son propre plan. Sa
+            propre section avancée, non liée à l'état de la précédente. */}
+        <AdvancedSection title="Vous avez déjà un plan ?" icon={ClipboardList}>
           <p className="flex items-start gap-1.5 text-xs text-(--ink-500)">
             Adoptez-le directement, sans lancer d&apos;audit.
             <InfoTip label="À propos de l'adoption d'un plan">
@@ -917,7 +928,7 @@ export function StepAudit() {
             data-testid="import-plan-dropzone"
             className={`flex cursor-pointer flex-col items-center justify-center gap-1 rounded-md border border-dashed p-4 text-center text-xs transition-colors ${
               isImportDragActive
-                ? "border-(--accent-500) bg-(--accent-50)"
+                ? "border-(--brand-500) bg-(--brand-50)"
                 : "border-(--ink-200) hover:border-(--ink-300)"
             } ${auditRunning || importPlanLoading ? "pointer-events-none opacity-60" : ""}`}
           >
@@ -974,7 +985,7 @@ export function StepAudit() {
               ))}
             </div>
           )}
-        </div>
+        </AdvancedSection>
 
         {lastError && (
           <Alert variant="destructive">
@@ -1093,7 +1104,7 @@ export function StepAudit() {
                   <Download className="mr-1 h-3.5 w-3.5" />
                   Exporter en Markdown
                 </Button>
-                {/* Export PDF imprimable (D6) — rendu par PrintReport (page). */}
+                {/* Export PDF imprimable — rendu par PrintReport (page). */}
                 <Button
                   variant="outline"
                   size="sm"
@@ -1154,13 +1165,25 @@ export function StepAudit() {
                       <PlanTree planValide={planValide} />
                     </div>
                   </TabsContent>
-                  <TabsContent value="edit" className="mt-3">
+                  <TabsContent value="edit" className="mt-3 space-y-3">
                     <div className="rounded-md border border-(--ink-100) bg-(--paper-50) p-3">
                       <PlanTreeEditor
                         planValide={planValide}
                         onChange={setPlanValide}
                       />
                     </div>
+                    {/* édition du plan par aller-retour avec l'Explorateur
+                        Windows : une alternative avancée à l'édition en arbre
+                        ci-dessus, repliée par défaut. Masquée en démonstration
+                        (endpoints locaux refusés côté serveur). */}
+                    {planOk && !DEMO_MODE && (
+                      <AdvancedSection title="Édition par l'Explorateur Windows">
+                        <PlanExplorerPanel
+                          planValide={planValide}
+                          onAdopt={setPlanValide}
+                        />
+                      </AdvancedSection>
+                    )}
                   </TabsContent>
                 </Tabs>
               ) : (
@@ -1171,17 +1194,6 @@ export function StepAudit() {
                   Plan modifié par rapport à la proposition de l&apos;IA — la
                   version éditée sera utilisée au classement.
                 </p>
-              )}
-
-              {/* édition du plan par aller-retour avec l'Explorateur Windows.
-                  Masqué en démonstration (endpoints locaux refusés côté serveur). */}
-              {planOk && !DEMO_MODE && (
-                <div className="rounded-md border border-(--ink-100) bg-(--paper-50) p-3">
-                  <PlanExplorerPanel
-                    planValide={planValide}
-                    onAdopt={setPlanValide}
-                  />
-                </div>
               )}
             </>
           ) : (

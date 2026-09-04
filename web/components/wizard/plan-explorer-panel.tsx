@@ -229,12 +229,12 @@ export function PlanExplorerPanel({
           ) : hasChanges ? (
             <ul className="space-y-0.5 text-xs">
               {changes!.renamed.map((c, i) => (
-                <li key={`r${i}`} className="text-(--accent-700)">
+                <li key={`r${i}`} className="text-(--brand-700)">
                   Renommé : {c.from} → {c.to}
                 </li>
               ))}
               {changes!.moved.map((c, i) => (
-                <li key={`m${i}`} className="text-(--accent-700)">
+                <li key={`m${i}`} className="text-(--brand-700)">
                   Déplacé : {c.from} → {c.to}
                 </li>
               ))}

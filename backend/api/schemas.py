@@ -184,6 +184,33 @@ class ClassementDirective(CamelModel):
     allow_creation: bool = False
 
 
+class ClassementRevisionTurn(CamelModel):
+    """Une consigne de révision — ce que l'archiviste demande de corriger
+    au vu du classement précédent. **Métadonnées seules** (texte rédigé par
+    l'archiviste)."""
+    consigne: str
+
+
+class ClassementRevision(CamelModel):
+    """Contexte d'une **relance en révision**.
+
+    Le front renvoie tel quel ce que le moteur lui avait donné (transport pur,
+    aucune logique en TS) :
+    - `turns` : l'historique des consignes de révision (tour courant en dernier),
+      borné côté moteur (`core.cla_revision.MAX_TURNS`) ;
+    - `previous_rows` : les lignes LLM du tour précédent (`llmRawRows`), reportées
+      ligne à ligne en colonnes `PrevFolder`/`PrevTitle` de la liste des fichiers.
+      Produites en mode `Ref`, elles sont réhydratées en `Path` côté moteur ;
+    - `previous_stats` / `previous_warnings` : les `resip.stats`/`warnings` reçus
+      du finalize précédent, résumés en une **synthèse mesurée** pour le prompt.
+
+    Tout vide ⇒ prompt et entrée **inchangés** (classement normal)."""
+    turns: list[ClassementRevisionTurn] = Field(default_factory=list)
+    previous_rows: list[dict] = Field(default_factory=list)
+    previous_stats: dict | None = None
+    previous_warnings: list[str] = Field(default_factory=list)
+
+
 class ClassementBatchRequest(ModelConfig):
     """Classe un lot : le serveur re-dérive les items et traite la tranche
     [batch_index*batch_size : +batch_size]. batch_size=0 ⇒ tous les items."""
@@ -201,6 +228,10 @@ class ClassementBatchRequest(ModelConfig):
     # un dossier du plan ou au niveau du fonds, injectées dans CLA-001. Vide ⇒
     # prompt inchangé. ⚠️ = modification de prompt (cf. core.cla_directives).
     directives: list[ClassementDirective] = Field(default_factory=list)
+    # Révision : classement précédent + consignes de correction. Absent ⇒
+    # prompt et entrée inchangés. ⚠️ = modification de prompt (cf.
+    # core.cla_revision).
+    revision: ClassementRevision | None = None
 
 
 class ClassementFinalizeRequest(CamelModel):

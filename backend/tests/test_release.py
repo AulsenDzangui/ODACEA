@@ -70,7 +70,7 @@ def test_changelog_has_unreleased_and_released_sections():
 def test_release_doc_present_and_covers_artifacts():
     text = RELEASE_DOC.read_text(encoding="utf-8")
     assert "semver" in text.lower() or "sémantique" in text.lower()
-    # Les deux artefacts exigés par la release.
+    # Les deux artefacts exigés.
     assert "wheel" in text.lower()
     assert "Docker" in text
     # La source de vérité de version est documentée (les 3 fichiers).

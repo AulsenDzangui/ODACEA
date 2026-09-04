@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { ClassementDirective } from "@/lib/csv/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,7 +14,15 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { MessageSquarePlus, Trash2, FolderTree, Info } from "lucide-react";
+import {
+  MessageSquarePlus,
+  Trash2,
+  FolderTree,
+  Info,
+  Pencil,
+  Check,
+  X,
+} from "lucide-react";
 
 /** Option de dossier du plan pour l'ancrage d'une consigne. */
 export type DirectiveFolderOption = { tech: string; label: string };
@@ -28,7 +36,9 @@ const FONDS = "__fonds__";
  * pose des préconisations ancrées à un dossier du plan ou au niveau du fonds ;
  * une consigne peut **autoriser la création de sous-dossiers** sous le dossier
  * visé. Les consignes ne modifient pas le plan (fin du détournement en faux
- * dossier), sont réutilisées à chaque relance du classement.
+ * dossier), sont réutilisées à chaque relance du classement, et restent
+ * **modifiables** (portée, texte, création) une fois posées — sans quoi corriger
+ * une formulation obligeait à retirer la consigne pour la retaper.
  *
  * Présentation pure : la sérialisation en bloc de prompt et la dérivation
  * des dossiers à création autorisée vivent dans le moteur (`core.cla_directives`).
@@ -49,11 +59,29 @@ export function DirectivesPanel({
   const [folder, setFolder] = useState<string>(FONDS);
   const [text, setText] = useState("");
   const [allowCreation, setAllowCreation] = useState(false);
+  // Index de la consigne en cours de modification, `null` = saisie d'une
+  // nouvelle. Le formulaire est le même dans les deux cas : il porte déjà les
+  // trois champs d'une consigne (portée, texte, création de sous-dossiers), les
+  // dupliquer en édition sur place ferait diverger deux jeux de contrôles.
+  const [editIndex, setEditIndex] = useState<number | null>(null);
+  const textRef = useRef<HTMLInputElement>(null);
+
+  // Un index hors bornes ne modifie rien : la liste peut rétrécir sous nos pieds
+  // (retrait, rechargement de projet) et on retombe alors sur un ajout.
+  const editing = editIndex !== null && editIndex < directives.length;
 
   const labelFor = (tech: string) =>
     folders.find((f) => f.tech === tech)?.label ?? tech;
 
-  const add = () => {
+  const resetForm = () => {
+    setText("");
+    setAllowCreation(false);
+    setFolder(FONDS);
+    setEditIndex(null);
+  };
+
+  /** Ajoute la consigne saisie, ou remplace celle en cours de modification. */
+  const submit = () => {
     const t = text.trim();
     if (!t) return;
     const entry: ClassementDirective = {
@@ -61,14 +89,33 @@ export function DirectivesPanel({
       allowCreation,
       ...(folder !== FONDS ? { folder } : {}),
     };
-    onChange([...directives, entry]);
-    setText("");
-    setAllowCreation(false);
-    setFolder(FONDS);
+    onChange(
+      editing
+        ? directives.map((d, k) => (k === editIndex ? entry : d))
+        : [...directives, entry],
+    );
+    resetForm();
   };
 
-  const remove = (i: number) =>
+  /** Charge une consigne existante dans le formulaire pour la modifier. */
+  const startEdit = (i: number) => {
+    const d = directives[i];
+    setText(d.text);
+    setAllowCreation(d.allowCreation);
+    setFolder(d.folder ?? FONDS);
+    setEditIndex(i);
+    textRef.current?.focus();
+  };
+
+  const remove = (i: number) => {
     onChange(directives.filter((_, k) => k !== i));
+    // L'index d'édition désigne une position : retirer la consigne éditée annule
+    // la modification, en retirer une d'avant la décale.
+    if (editIndex !== null) {
+      if (i === editIndex) resetForm();
+      else if (i < editIndex) setEditIndex(editIndex - 1);
+    }
+  };
 
   return (
     <div className="space-y-4" id="directives-panel">
@@ -87,7 +134,12 @@ export function DirectivesPanel({
           {directives.map((d, i) => (
             <li
               key={i}
-              className="flex items-start justify-between gap-3 rounded-md border bg-card px-3 py-2 text-sm"
+              className={
+                "flex items-start justify-between gap-3 rounded-md border bg-card px-3 py-2 text-sm" +
+                (editing && i === editIndex
+                  ? " border-primary ring-1 ring-primary"
+                  : "")
+              }
             >
               <div className="min-w-0 space-y-0.5">
                 <div className="font-medium">
@@ -97,28 +149,54 @@ export function DirectivesPanel({
                     <span className="text-muted-foreground">Ensemble du fonds</span>
                   )}
                   {d.allowCreation && (
-                    <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-xs font-normal text-amber-800 dark:bg-amber-950 dark:text-amber-300">
+                    <span className="ml-2 rounded bg-(--warning-100) px-1.5 py-0.5 text-xs font-normal text-(--warning-700)">
                       création de sous-dossiers
                     </span>
                   )}
                 </div>
                 <div className="break-words text-muted-foreground">{d.text}</div>
+                {editing && i === editIndex && (
+                  <div className="text-xs text-primary">
+                    Modification en cours dans le formulaire ci-dessous.
+                  </div>
+                )}
               </div>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-7 w-7 shrink-0"
-                onClick={() => remove(i)}
-                aria-label="Retirer la consigne"
-              >
-                <Trash2 className="h-4 w-4" />
-              </Button>
+              <div className="flex shrink-0 items-center gap-0.5">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7"
+                  onClick={() => startEdit(i)}
+                  aria-label="Modifier la consigne"
+                >
+                  <Pencil className="h-4 w-4" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7"
+                  onClick={() => remove(i)}
+                  aria-label="Retirer la consigne"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </div>
             </li>
           ))}
         </ul>
       )}
 
-      <div className="space-y-3 rounded-md border border-dashed p-3">
+      <div
+        className={
+          "space-y-3 rounded-md border p-3" +
+          (editing ? " border-primary" : " border-dashed")
+        }
+      >
+        {editing && (
+          <p className="text-xs font-medium text-primary">
+            Modification de la consigne {editIndex! + 1}
+          </p>
+        )}
         <div className="grid gap-3 sm:grid-cols-[minmax(0,14rem)_1fr]">
           <div className="space-y-1">
             <Label className="text-xs">Portée</Label>
@@ -142,10 +220,12 @@ export function DirectivesPanel({
             </Label>
             <Input
               id="directive-text"
+              ref={textRef}
               value={text}
               onChange={(e) => setText(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter") add();
+                if (e.key === "Enter") submit();
+                if (e.key === "Escape" && editing) resetForm();
               }}
               placeholder="ex. regrouper CV, lettre de motivation et références par employeur"
             />
@@ -162,10 +242,27 @@ export function DirectivesPanel({
               Autoriser la création de sous-dossiers
             </Label>
           </div>
-          <Button size="sm" onClick={add} disabled={!text.trim()}>
-            <MessageSquarePlus className="mr-1.5 h-4 w-4" />
-            Ajouter
-          </Button>
+          <div className="flex items-center gap-2">
+            {editing && (
+              <Button size="sm" variant="ghost" onClick={resetForm}>
+                <X className="mr-1.5 h-4 w-4" />
+                Annuler
+              </Button>
+            )}
+            <Button size="sm" onClick={submit} disabled={!text.trim()}>
+              {editing ? (
+                <>
+                  <Check className="mr-1.5 h-4 w-4" />
+                  Enregistrer
+                </>
+              ) : (
+                <>
+                  <MessageSquarePlus className="mr-1.5 h-4 w-4" />
+                  Ajouter
+                </>
+              )}
+            </Button>
+          </div>
         </div>
       </div>
 

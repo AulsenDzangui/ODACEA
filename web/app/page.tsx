@@ -53,7 +53,7 @@ export default function Home() {
 
   return (
     <>
-    {/* Coquille applicative — masquée à l'impression (cf. PrintReport, D6). */}
+    {/* Coquille applicative — masquée à l'impression (cf. PrintReport). */}
     <div className="flex h-screen flex-col overflow-hidden print:hidden">
       <AppHeader badge={<StatusPill />}>
         <Button asChild variant="ghost" size="default" title="Documentation">

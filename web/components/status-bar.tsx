@@ -7,7 +7,7 @@ import { useT } from "@/lib/i18n";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { AlertTriangle } from "lucide-react";
 
-// ── Barre d'état unique (D8) ─────────────────────────────────────────────────
+// ── Barre d'état unique ──────────────────────────────────────────────────────
 // Indicateur permanent consolidant connexion backend + modèle actif (remplace
 // model-badge + backend-health-alert). `StatusPill` vit dans l'en-tête (toujours
 // visible) ; `BackendDownBanner` ajoute le message actionnable quand le backend
@@ -35,7 +35,7 @@ function deriveLocalLabel(localModel: string, localEndpoint: string): string {
 }
 
 const HEALTH_DOT: Record<HealthStatus, string> = {
-  healthy: "bg-emerald-500",
+  healthy: "bg-(--success-500)",
   down: "bg-(--danger-500) animate-pulse",
   unknown: "bg-(--ink-300)",
 };

@@ -7,7 +7,7 @@ import { API_BASE } from "@/lib/llm/client-stream";
 
 export type HealthStatus = "healthy" | "down" | "unknown";
 
-// Sonde partagée (barre d'état unique, D8) : un seul intervalle process-wide
+// Sonde partagée (barre d'état unique) : un seul intervalle process-wide
 // (module singleton), quel que soit le nombre de composants consommateurs
 // (StatusPill + BackendDownBanner montés simultanément) — évite de dupliquer
 // les requêtes GET /health.

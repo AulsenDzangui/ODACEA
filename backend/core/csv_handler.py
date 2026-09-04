@@ -490,18 +490,71 @@ def prepare_for_classement(df: pd.DataFrame, include_description: bool = True) -
 #   • mode « Path » : `Path` seul comme identifiant (recopié en sortie) — méthode
 #     historique. `Path` est présent dans les deux cas (signal de classement :
 #     l'arborescence source).
-_CLASSEMENT_LLM_COLS_REF = ("Ref", "Path", "CurrentTitle", "Date", "Description")
-_CLASSEMENT_LLM_COLS_PATH = ("Path", "CurrentTitle", "Date", "Description")
+# `PrevFolder`/`PrevTitle` ferment la liste : le classement du tour
+# précédent, reporté ligne à ligne pour une **révision** (cf. `core.cla_revision`).
+# Absentes hors révision → le filtre de colonnes ci-dessous les ignore.
+_CLASSEMENT_LLM_COLS_REF = (
+    "Ref", "Path", "CurrentTitle", "Date", "Description", "PrevFolder", "PrevTitle",
+)
+_CLASSEMENT_LLM_COLS_PATH = (
+    "Path", "CurrentTitle", "Date", "Description", "PrevFolder", "PrevTitle",
+)
+
+# Colonnes du classement précédent attendues dans `previous` (forme de sortie du
+# LLM, telle que renvoyée par `extract_csv_from_response`).
+PREVIOUS_COLUMNS = ("Path", "TargetFolder", "NewTitle")
 
 
-def classement_llm_csv(df_items: pd.DataFrame, ref_mode: bool = False) -> str:
+def with_previous_classement(
+    df_items: pd.DataFrame, previous: pd.DataFrame | None
+) -> pd.DataFrame:
+    """Reporte le classement précédent sur les items à classer.
+
+    Jointure à **gauche** sur `Path` (toujours présent dans la table d'items,
+    quelle que soit la méthode d'identifiant) → deux colonnes ajoutées en fin de
+    table : `PrevFolder` et `PrevTitle`. Un item absent de ``previous`` — ou dont
+    la décision précédente était vide — reçoit des valeurs **vides** : c'est un
+    signal exploitable (« ce fichier n'avait pas été classé »).
+
+    ``previous`` doit déjà porter une colonne `Path` (cf. ``ensure_path_column``
+    pour un classement précédent produit en mode `Ref`). ``previous`` vide ou
+    ``None`` ⇒ table **inchangée** (aucune colonne ajoutée), donc sortie
+    byte-identique à un classement normal. Opère sur une copie.
+    """
+    if previous is None or previous.empty or "Path" not in previous.columns:
+        return df_items
+    prev = previous.copy()
+    for col in ("TargetFolder", "NewTitle"):
+        prev[col] = prev[col].astype(str).fillna("") if col in prev.columns else ""
+    prev["Path"] = prev["Path"].astype(str).str.strip()
+    # Dernière décision gagnante pour un chemin répété (lots réassemblés).
+    prev = prev[prev["Path"] != ""].drop_duplicates(subset=["Path"], keep="last")
+    mapping = prev.set_index("Path")[["TargetFolder", "NewTitle"]]
+
+    out = df_items.copy()
+    keys = out["Path"].astype(str).str.strip()
+    out["PrevFolder"] = keys.map(mapping["TargetFolder"]).fillna("")
+    out["PrevTitle"] = keys.map(mapping["NewTitle"]).fillna("")
+    return out
+
+
+def classement_llm_csv(
+    df_items: pd.DataFrame,
+    ref_mode: bool = False,
+    previous: pd.DataFrame | None = None,
+) -> str:
     """Sérialise les items pour le prompt CLA-001.
 
     ``ref_mode=True`` envoie `Ref;Path;CurrentTitle;Date[;Description]` : le modèle
     recopie la `Ref` courte en sortie (gain au decode). ``ref_mode=False``
     (historique) envoie `Path;CurrentTitle;Date[;Description]` : le modèle recopie
     le `Path` complet — ancrage plus fort, sortie plus longue.
+
+    ``previous`` : classement du tour précédent (`Path;TargetFolder;NewTitle`)
+    reporté en deux colonnes finales `PrevFolder;PrevTitle` pour une **révision**.
+    ``None`` ⇒ sortie **inchangée**.
     """
+    df_items = with_previous_classement(df_items, previous)
     cols_spec = _CLASSEMENT_LLM_COLS_REF if ref_mode else _CLASSEMENT_LLM_COLS_PATH
     cols = [c for c in cols_spec if c in df_items.columns]
     return csv_to_string(df_items[cols])
@@ -886,7 +939,7 @@ def _ancestors_inclusive(name: str, folder_tree: dict, cache: dict | None = None
     return result
 
 
-def _ensure_path_column(df_llm: pd.DataFrame, df_original: pd.DataFrame) -> pd.DataFrame:
+def ensure_path_column(df_llm: pd.DataFrame, df_original: pd.DataFrame) -> pd.DataFrame:
     """Réhydrate la colonne `Path` à partir de la `Ref` produite par le LLM.
 
     Le modèle reçoit/renvoie une référence courte (`Ref`, un entier) au lieu du
@@ -910,6 +963,12 @@ def _ensure_path_column(df_llm: pd.DataFrame, df_original: pd.DataFrame) -> pd.D
     df = df_llm.copy()
     df.insert(0, "Path", df["Ref"].astype(str).str.strip().map(ref_to_path).fillna(""))
     return df
+
+
+# Alias historique (usage interne au module ; l'API publique est
+# `ensure_path_column`, réutilisée par la révision pour rejouer un
+# classement précédent produit en mode `Ref`).
+_ensure_path_column = ensure_path_column
 
 
 def _slug_created(name: str) -> str:

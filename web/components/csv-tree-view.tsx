@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { forwardRef, useImperativeHandle, useState } from "react";
 import type { CsvTreeNode } from "@/lib/csv/csv-tree";
 import { searchCsvTree } from "@/lib/csv/csv-tree";
 
@@ -12,49 +12,95 @@ type Props = {
   query?: string;
 };
 
-export function CsvTreeView({ nodes, query = "" }: Props) {
-  const match = searchCsvTree(nodes, query);
-  const filtering = query.trim().length > 0;
+/** Impératif exposé au parent pour les boutons plier/déplier globaux. */
+export type CsvTreeViewHandle = {
+  expandAll: () => void;
+  collapseAll: () => void;
+};
 
-  if (nodes.length === 0) {
-    return (
-      <p className="text-sm text-(--ink-500)">Aucune donnée à afficher.</p>
-    );
+function collectFolderIds(nodes: CsvTreeNode[], out: string[]) {
+  for (const node of nodes) {
+    if (node.isFolder) {
+      out.push(node.id);
+      collectFolderIds(node.children, out);
+    }
   }
-  if (filtering && match.withMatch.size === 0) {
-    return (
-      <p className="px-2 py-1 text-sm text-(--ink-500)">
-        Aucun fichier ne correspond à la recherche.
-      </p>
-    );
-  }
-  return (
-    <div className="text-sm">
-      {nodes.map((node) => (
-        <CsvNode
-          key={node.id}
-          node={node}
-          filtering={filtering}
-          matched={match.matched}
-          withMatch={match.withMatch}
-        />
-      ))}
-    </div>
-  );
 }
+
+export const CsvTreeView = forwardRef<CsvTreeViewHandle, Props>(
+  function CsvTreeView({ nodes, query = "" }, ref) {
+    // Dossiers repliés (référencés par id) ; absent de l'ensemble = déplié —
+    // c'est le comportement par défaut (tout déplié à l'ouverture).
+    const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+
+    useImperativeHandle(
+      ref,
+      () => ({
+        expandAll: () => setCollapsed(new Set()),
+        collapseAll: () => {
+          const ids: string[] = [];
+          collectFolderIds(nodes, ids);
+          setCollapsed(new Set(ids));
+        },
+      }),
+      [nodes],
+    );
+
+    const match = searchCsvTree(nodes, query);
+    const filtering = query.trim().length > 0;
+
+    if (nodes.length === 0) {
+      return (
+        <p className="text-sm text-(--ink-500)">Aucune donnée à afficher.</p>
+      );
+    }
+    if (filtering && match.withMatch.size === 0) {
+      return (
+        <p className="px-2 py-1 text-sm text-(--ink-500)">
+          Aucun fichier ne correspond à la recherche.
+        </p>
+      );
+    }
+    return (
+      <div className="text-sm">
+        {nodes.map((node) => (
+          <CsvNode
+            key={node.id}
+            node={node}
+            filtering={filtering}
+            matched={match.matched}
+            withMatch={match.withMatch}
+            collapsed={collapsed}
+            onToggle={(id) =>
+              setCollapsed((prev) => {
+                const next = new Set(prev);
+                if (next.has(id)) next.delete(id);
+                else next.add(id);
+                return next;
+              })
+            }
+          />
+        ))}
+      </div>
+    );
+  },
+);
 
 function CsvNode({
   node,
   filtering,
   matched,
   withMatch,
+  collapsed,
+  onToggle,
 }: {
   node: CsvTreeNode;
   filtering: boolean;
   matched: Set<string>;
   withMatch: Set<string>;
+  collapsed: Set<string>;
+  onToggle: (id: string) => void;
 }) {
-  const [open, setOpen] = useState(true);
   const hasChildren = node.children.length > 0;
 
   if (filtering && !withMatch.has(node.id)) return null;
@@ -82,13 +128,13 @@ function CsvNode({
   }
 
   // En recherche : tout le trajet est déplié d'office.
-  const effectiveOpen = filtering ? true : open;
+  const effectiveOpen = filtering ? true : !collapsed.has(node.id);
 
   return (
     <div>
       <button
         type="button"
-        onClick={() => hasChildren && !filtering && setOpen((v) => !v)}
+        onClick={() => hasChildren && !filtering && onToggle(node.id)}
         className={
           "flex w-full items-center gap-1.5 rounded-md px-2 py-1.25 text-left transition-colors hover:bg-[rgba(120,120,120,0.1)]" +
           highlight
@@ -123,6 +169,8 @@ function CsvNode({
               filtering={filtering}
               matched={matched}
               withMatch={withMatch}
+              collapsed={collapsed}
+              onToggle={onToggle}
             />
           ))}
         </div>

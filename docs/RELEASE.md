@@ -106,3 +106,32 @@ cd backend && pip install build && python -m build && ls dist/
 # Images Docker (registre joignable requis pour le pull des bases)
 docker compose build           # backend + web depuis compose.yml
 ```
+
+## 6. Exécutable autonome (bêta)
+
+Pour un poste isolé sans `npm`/`pip`/Docker (typiquement une petite structure
+sans informatique dédiée), un **exécutable unique par OS** — `ODACEA-linux` /
+`ODACEA-windows.exe` — est aussi attaché à chaque release : double-clic,
+l'application démarre et ouvre le navigateur par défaut sur l'interface, sans
+rien installer.
+
+- **Mono-poste, local** : écoute `127.0.0.1` uniquement, aucune connexion
+  sortante non sollicitée, aucune mise à jour automatique silencieuse.
+- **Pas de fenêtre native** — l'outil s'ouvre dans le navigateur par défaut
+  (le processus tourne dans une fenêtre de terminal, à garder ouverte).
+- Le **modèle local** (Ollama, LM Studio…) reste à installer séparément — il
+  n'est pas embarqué dans l'exécutable ; voir
+  [le guide d'installation on-prem](INSTALLATION_ONPREM.md) pour ce cas.
+  L'exécutable fonctionne aussi avec un modèle cloud (clé API renseignée dans
+  l'interface).
+- Taille de l'ordre de la centaine de Mo (Python + Pandas + LiteLLM figés).
+- Construit par [`.github/workflows/executables.yml`](../.github/workflows/executables.yml)
+  (PyInstaller), sur le même tag `vX.Y.Z` que les autres artefacts de release
+  (§4), avec un **smoke-test réel** (l'exécutable est lancé, interrogé sur
+  `/health`) avant d'être attaché à la **même** GitHub Release.
+- Construit depuis les sources, hors CI : `cd web && npm run build:desktop`
+  puis `cd backend && pip install -e ".[desktop]" && pyinstaller
+  odacea_desktop.spec` (produit `backend/dist/ODACEA[.exe]`).
+- Docker Compose (§4) reste le mode d'installation **de référence** pour un
+  déploiement institutionnel ; l'exécutable autonome est un différenciant pour
+  le cas mono-poste, pas un remplacement.

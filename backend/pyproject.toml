@@ -39,11 +39,20 @@ dev = [
     "pip-audit>=2.7",  # audit de vulnérabilités des dépendances
     "build>=1.0",      # construction du wheel/sdist de release
 ]
+# Empaquetage du mode tout-en-un — exécutable PyInstaller. Séparé de `dev` :
+# n'a rien à faire dans un poste de développement du moteur, seulement dans le
+# job de build de l'exécutable.
+desktop = [
+    "pyinstaller>=6.0",
+]
 
 [project.scripts]
 # Point d'entrée console : `pip install -e .` → `odacea audit ...`
 # (remplace `python cli.py ...`). `main()` renvoie le code de sortie EXIT_*.
 odacea = "cli:main"
+# Mode tout-en-un : API + front local, navigateur ouvert automatiquement.
+# Même chemin de code que `odacea serve` et que l'exécutable PyInstaller.
+odacea-desktop = "desktop:main"
 
 [project.urls]
 Homepage = "https://github.com/AulsenDzangui/odacea"
@@ -54,7 +63,7 @@ Homepage = "https://github.com/AulsenDzangui/odacea"
 # n'embarque ni les tests ni les répertoires de données (evals/, demo_assets/).
 
 [tool.setuptools]
-py-modules = ["cli"]
+py-modules = ["cli", "desktop"]
 packages = ["api", "config", "core", "llm", "prompts"]
 
 # ── Outillage qualité ─────────────────────────────────────────────────────────

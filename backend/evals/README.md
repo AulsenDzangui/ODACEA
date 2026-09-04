@@ -179,6 +179,40 @@ compromis mesuré.
 | (c) | Variante AUD-001 à profondeur de plan bornée paramétrable | `planDepth` conforme à la borne, `planTreeParsed` stable |
 | (d) | Consigne RGPD plus discriminante (faux positifs sur noms de personnes) | lecture humaine §1.5 (pas de métrique auto — échantillonner) |
 
+### Révision du classement (CLA-001 1.6.0) — protocole
+
+La révision n'est **pas** un run comparable aux autres : on ne mesure pas « le
+classement est-il bon » mais « la correction demandée a-t-elle été faite **sans
+tout rebrasser** ». Le harnais `eval` ne l'orchestre pas encore (il ne gère qu'un
+run par cellule) ; le protocole passe par deux `classement` successifs, dont le
+second porte les métriques dans son `--json`.
+
+```bash
+# 1. Run de référence (aucune révision)
+odacea classement vrac.csv --plan plan.md --out t0.csv --model m --json > t0.json
+#    → extraire le CSV 3 colonnes du run (raw/ ou reconversion) en precedent.csv
+
+# 2. Tour de révision avec une consigne FIXE (la même pour tous les modèles)
+odacea classement vrac.csv --plan plan.md --out t1.csv --model m --json \
+  --revise-from precedent.csv \
+  --revision "Les CV et lettres de motivation vont dans 1-2, pas dans 1-1" \
+  > t1.json
+jq '.revision' t1.json
+```
+
+| Métrique | Lecture | Attendu |
+|---|---|---|
+| `revisionChangedPct` | part des décisions modifiées | **bas** — une consigne ciblée ne touche que sa cible. Proche de 100 % = le modèle a tout refait : échec, même si le résultat semble bon |
+| `revisionFolderChanged` / `revisionTitleChanged` | déplacements vs renommages | cohérent avec la nature de la consigne |
+| `revisionFoldersMissingDelta`, `revisionOffPlanDelta`, `revisionUnclassifiedDelta`, `revisionMalformedDelta` | évolution vs le tour précédent | **≤ 0** (négatif = réparé). Un delta positif signale une régression introduite par la révision |
+| lecture humaine | la consigne est-elle honorée ? | échantillonner les fichiers visés — aucune métrique automatique ne dit « les CV sont bien dans 1-2 » |
+
+Deux échecs à guetter, tous deux invisibles sans ces chiffres : le modèle
+**ignore** la consigne (`revisionChangedPct` ≈ 0, deltas nuls) ou il **rebrasse**
+tout (`revisionChangedPct` élevé, deltas positifs). Seuils indicatifs à établir
+sur un fonds réel — la borne dépend de la proportion de fichiers visés par la
+consigne, donc du corpus ; ils n'ont de sens qu'à consigne fixée.
+
 ### Respect de l'ordre originel (AUD-001 1.1.0) — mesuré le 2026-07-09 (cloud)
 
 La 1.1.0 fait de la **conservation de l'ordre existant le défaut** du prompt

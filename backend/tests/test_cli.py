@@ -1,4 +1,4 @@
-"""Tests bout-en-bout de l'interface batch (`cli.py`) — B3 (+ reprise).
+"""Tests bout-en-bout de l'interface batch (`cli.py`) — avec reprise.
 
 Provider LLM mocké (FakeProvider/SequenceProvider rejouant les golden files) :
 codes de sortie EXIT_*, fichiers produits, modes --ref et --batch-size,
@@ -409,6 +409,122 @@ def test_classement_directives_missing_file_exits_2(tmp_path, input_csv, plan_fi
         "classement", str(input_csv), "--plan", str(plan_file),
         "--out", str(tmp_path / "out.csv"), "--model", "m",
         "--directives", str(tmp_path / "absent.txt"),
+    ])
+    assert rc == cli.EXIT_INPUT_INVALID
+
+
+# ── classement --revise-from / --revision (révision) ─────────────────────────
+
+def _previous_classement(tmp_path, folder="1_Eleves"):
+    """Classement précédent au format 3 colonnes (même forme que --corrections)."""
+    f = tmp_path / "precedent.csv"
+    f.write_text(
+        "Path;TargetFolder;NewTitle\n"
+        f"cantine/menus_janvier.docx;{folder};menus-janvier.docx\n"
+        f"cantine/facture_traiteur_2021.pdf;{folder};facture-traiteur.pdf\n",
+        encoding="utf-8",
+    )
+    return f
+
+
+def test_classement_revise_from_injects_previous(monkeypatch, tmp_path, input_csv,
+                                                 plan_file, golden_cla_path):
+    """--revise-from reporte les décisions précédentes ligne à ligne et
+    --revision ouvre le canal ; la synthèse est recalculée localement, sans LLM."""
+    provider = _use_provider(monkeypatch, FakeProvider(response=golden_cla_path))
+    rc = cli.main([
+        "classement", str(input_csv), "--plan", str(plan_file),
+        "--out", str(tmp_path / "final.csv"), "--model", "m",
+        "--revise-from", str(_previous_classement(tmp_path)),
+        "--revision", "les menus vont dans 2_Cantine",
+    ])
+    assert rc == cli.EXIT_OK
+    system_prompt, user_msg = provider.calls[-1]
+    assert "# Révision d'un classement précédent" in system_prompt
+    assert "les menus vont dans 2_Cantine" in user_msg
+    assert "PrevFolder;PrevTitle" in user_msg
+    assert "menus-janvier.docx" in user_msg
+    # Synthèse mesurée : le classement précédent laissait 2_Cantine vide.
+    assert "Résultat de votre classement précédent" in user_msg
+    from prompts import CLA_001
+    assert user_msg.index("les menus vont dans 2_Cantine") < user_msg.index(CLA_001.CACHE_BOUNDARY)
+
+
+def test_classement_revision_from_file(monkeypatch, tmp_path, input_csv,
+                                       plan_file, golden_cla_path):
+    """--revision accepte un fichier (une consigne par ligne) autant qu'un texte."""
+    consignes = tmp_path / "revision.txt"
+    consignes.write_text("# tour 2\npremière consigne\nseconde consigne\n", encoding="utf-8")
+    provider = _use_provider(monkeypatch, FakeProvider(response=golden_cla_path))
+    rc = cli.main([
+        "classement", str(input_csv), "--plan", str(plan_file),
+        "--out", str(tmp_path / "final.csv"), "--model", "m",
+        "--revision", str(consignes),
+    ])
+    assert rc == cli.EXIT_OK
+    _, user_msg = provider.calls[-1]
+    assert "(tour 1) première consigne" in user_msg
+    assert "(tour courant) seconde consigne" in user_msg
+
+
+def test_classement_revision_reports_stability_in_json(monkeypatch, tmp_path, input_csv,
+                                                       plan_file, golden_cla_path, capsys):
+    """Le résumé machine porte la part du classement réellement modifiée : c'est
+    le chiffre qui dit si la révision a corrigé ou tout rebrassé."""
+    _use_provider(monkeypatch, FakeProvider(response=golden_cla_path))
+    rc = cli.main([
+        "classement", str(input_csv), "--plan", str(plan_file),
+        "--out", str(tmp_path / "final.csv"), "--model", "m", "--json",
+        "--revise-from", str(_previous_classement(tmp_path)),
+        "--revision", "les menus vont dans 2_Cantine",
+    ])
+    assert rc == cli.EXIT_OK
+    revision = json.loads(capsys.readouterr().out)["revision"]
+    assert revision["turns"] == ["les menus vont dans 2_Cantine"]
+    assert revision["revisionCompared"] == 2  # les 2 chemins du classement précédent
+    assert revision["revisionChangedPct"] is not None
+    # Le classement précédent laissait 2_Cantine vide : le golden le remplit.
+    assert revision["revisionFoldersMissingDelta"] < 0
+
+
+def test_classement_revision_journal_traces_the_turn(monkeypatch, tmp_path, input_csv,
+                                                     plan_file, golden_cla_path):
+    """Un classement révisé ne se relit pas comme un premier jet : le journal
+    doit dire lequel il documente."""
+    _use_provider(monkeypatch, FakeProvider(response=golden_cla_path))
+    journal = tmp_path / "journal.md"
+    rc = cli.main([
+        "classement", str(input_csv), "--plan", str(plan_file),
+        "--out", str(tmp_path / "final.csv"), "--model", "m",
+        "--journal", str(journal),
+        "--revise-from", str(_previous_classement(tmp_path)),
+        "--revision", "les menus vont dans 2_Cantine",
+    ])
+    assert rc == cli.EXIT_OK
+    text = journal.read_text(encoding="utf-8")
+    assert "## Révision du classement" in text
+    assert "les menus vont dans 2_Cantine" in text
+    assert "Décisions modifiées" in text
+
+
+def test_classement_without_revision_prompt_unchanged(monkeypatch, tmp_path, input_csv,
+                                                      plan_file, golden_cla_path):
+    provider = _use_provider(monkeypatch, FakeProvider(response=golden_cla_path))
+    rc = cli.main([
+        "classement", str(input_csv), "--plan", str(plan_file),
+        "--out", str(tmp_path / "final.csv"), "--model", "m",
+    ])
+    assert rc == cli.EXIT_OK
+    system_prompt, user_msg = provider.calls[-1]
+    assert "# Révision d'un classement précédent" not in system_prompt
+    assert "PrevFolder" not in user_msg
+
+
+def test_classement_revise_from_missing_file_exits_2(tmp_path, input_csv, plan_file):
+    rc = cli.main([
+        "classement", str(input_csv), "--plan", str(plan_file),
+        "--out", str(tmp_path / "out.csv"), "--model", "m",
+        "--revise-from", str(tmp_path / "absent.csv"),
     ])
     assert rc == cli.EXIT_INPUT_INVALID
 
@@ -939,7 +1055,7 @@ def test_classement_full_resume_needs_no_model(monkeypatch, tmp_path, input_csv,
     assert rc == cli.EXIT_OK
 
 
-# ── eval (harnais d'évaluation des prompts —) ────────────────────────────────
+# ── eval (harnais d'évaluation des prompts) ──────────────────────────────────
 
 def test_eval_both_writes_report_and_table(monkeypatch, tmp_path, capsys, input_csv,
                                            golden_aud, golden_cla_path):

@@ -73,7 +73,7 @@ export function Sidebar({ onCollapse }: { onCollapse?: () => void } = {}) {
   const [feedback, setFeedback] = useState<
     { kind: "ok" | "err"; msg: string } | null
   >(null);
-  // Occupation estimée du localStorage (D9) — recalculée après chaque mutation
+  // Occupation estimée du localStorage — recalculée après chaque mutation
   // de la liste des projets ; déclenche une alerte quota au-delà du seuil.
   const [storageRatio, setStorageRatio] = useState(0);
   const importInputRef = useRef<HTMLInputElement>(null);
@@ -129,6 +129,8 @@ export function Sidebar({ onCollapse }: { onCollapse?: () => void } = {}) {
     planModifie: state.planModifie,
     planOrigin: state.planOrigin,
     classementDirectives: state.classementDirectives,
+    classementRevisions: state.classementRevisions,
+    revisionBaseline: state.revisionBaseline,
     briefMode: state.briefMode,
     referencePlan: state.referencePlan,
     referencePlanName: state.referencePlanName,
@@ -425,7 +427,7 @@ export function Sidebar({ onCollapse }: { onCollapse?: () => void } = {}) {
           <Plus className="mr-1 h-3.5 w-3.5" />
           Nouveau projet
         </Button>
-        {/* Import d'un projet .json exporté (D9) — portabilité entre postes. */}
+        {/* Import d'un projet .json exporté — portabilité entre postes. */}
         <Button
           type="button"
           variant="outline"
@@ -449,7 +451,7 @@ export function Sidebar({ onCollapse }: { onCollapse?: () => void } = {}) {
         />
       </div>
 
-      {/* Alerte quota localStorage (D9) : la persistance est entièrement
+      {/* Alerte quota localStorage : la persistance est entièrement
           côté client ; on prévient avant la saturation pour éviter les pertes
           d'auto-save. Exporter puis supprimer d'anciens projets libère la place. */}
       {storageRatio >= LOCALSTORAGE_WARN_RATIO && (
@@ -620,6 +622,8 @@ function snapshotFromStored(stored: {
   planModifie: boolean;
   planOrigin?: import("@/lib/store").PlanOrigin;
   classementDirectives?: import("@/lib/csv/types").ClassementDirective[];
+  classementRevisions?: import("@/lib/csv/types").RevisionTurn[];
+  revisionBaseline?: import("@/lib/csv/types").RevisionBaseline | null;
   briefMode?: boolean;
   referencePlan?: string;
   referencePlanName?: string;
@@ -652,6 +656,8 @@ function snapshotFromStored(stored: {
     planModifie: stored.planModifie,
     planOrigin: stored.planOrigin,
     classementDirectives: stored.classementDirectives ?? [],
+    classementRevisions: stored.classementRevisions ?? [],
+    revisionBaseline: stored.revisionBaseline ?? null,
     briefMode: stored.briefMode ?? false,
     referencePlan: stored.referencePlan ?? "",
     referencePlanName: stored.referencePlanName ?? "",

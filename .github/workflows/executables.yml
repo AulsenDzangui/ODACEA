@@ -1,0 +1,146 @@
+# Construit l'exécutable autonome du mode tout-en-un (FastAPI sert le front
+# en export statique, un seul process Python, un seul port, navigateur ouvert
+# automatiquement — voir backend/desktop.py) pour Linux et Windows, puis — sur
+# un tag `vX.Y.Z` — les attache à la GitHub Release déjà créée par release.yml
+# (wheel + images Docker).
+#
+# Deux étapes distinctes : le front est exporté en statique **une seule fois**
+# (agnostique de l'OS, `web/scripts/build-desktop-export.mjs`), puis chaque
+# binaire est empaqueté sur son propre OS (PyInstaller ne fait pas de
+# cross-compilation — c'est tout l'intérêt d'un runner Windows ici). Chaque
+# exécutable passe un smoke-test réel avant d'être publié : lancé en tâche de
+# fond, interrogé sur `/health` jusqu'à réponse ou délai dépassé — c'est ce qui
+# révèle un hidden-import PyInstaller manquant, pas une relecture du `.spec`.
+#
+# Déclenchement :
+#   - `git tag v1.0.0 && git push --tags`  -> build + attachement à la release
+#   - manuellement (onglet Actions -> Run workflow) -> build seul, artefacts
+#     téléchargeables depuis la page du run, sans release.
+name: Exécutables autonomes
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write # attacher les binaires à la GitHub Release
+
+jobs:
+  # ── Front : export statique, une seule fois (indépendant de l'OS cible) ────
+  front:
+    name: Front — export statique
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Dépendances
+        run: npm ci
+      - name: Export statique (NEXT_OUTPUT=export, same-origin)
+        run: npm run build:desktop
+      - uses: actions/upload-artifact@v4
+        with:
+          name: front-export
+          path: web/out
+          if-no-files-found: error
+          retention-days: 1
+
+  # ── Exécutable : un par OS (PyInstaller ne cross-compile pas) ───────────────
+  build:
+    name: Exécutable — ${{ matrix.os_label }}
+    needs: front
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            os_label: linux
+            built_name: ODACEA
+            asset_name: ODACEA-linux
+          - os: windows-latest
+            os_label: windows
+            built_name: ODACEA.exe
+            asset_name: ODACEA-windows.exe
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          name: front-export
+          # Le `.spec` embarque `../web/out` relatif à `backend/` (convention
+          # lue par `resolve_static_dir` côté source, en dossier "static" une
+          # fois dans le bundle onefile).
+          path: web/out
+      - name: Dépendances (moteur + PyInstaller)
+        run: pip install -e ".[desktop]"
+      - name: Construire l'exécutable
+        run: pyinstaller odacea_desktop.spec
+
+      - name: "Smoke-test — /health répond (Linux)"
+        if: runner.os == 'Linux'
+        run: |
+          set -e
+          chmod +x "dist/${{ matrix.built_name }}"
+          "./dist/${{ matrix.built_name }}" --port 8765 --no-browser &
+          pid=$!
+          ok=0
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8765/health >/dev/null 2>&1; then
+              ok=1
+              break
+            fi
+            sleep 1
+          done
+          kill "$pid" 2>/dev/null || true
+          if [ "$ok" -ne 1 ]; then
+            echo "L'exécutable n'a jamais répondu sur /health" >&2
+            exit 1
+          fi
+
+      - name: "Smoke-test — /health répond (Windows)"
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $proc = Start-Process -FilePath ".\dist\${{ matrix.built_name }}" `
+            -ArgumentList "--port", "8765", "--no-browser" -PassThru
+          $ok = $false
+          for ($i = 0; $i -lt 30; $i++) {
+            try {
+              $resp = Invoke-WebRequest -Uri "http://127.0.0.1:8765/health" `
+                -UseBasicParsing -TimeoutSec 2
+              if ($resp.StatusCode -eq 200) { $ok = $true; break }
+            } catch {}
+            Start-Sleep -Seconds 1
+          }
+          Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+          if (-not $ok) {
+            Write-Error "L'exécutable n'a jamais répondu sur /health"
+            exit 1
+          }
+
+      - name: Nommer l'artefact par OS
+        shell: bash
+        run: cp "dist/${{ matrix.built_name }}" "dist/${{ matrix.asset_name }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset_name }}
+          path: backend/dist/${{ matrix.asset_name }}
+          retention-days: 30
+      - name: Attacher à la GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: backend/dist/${{ matrix.asset_name }}

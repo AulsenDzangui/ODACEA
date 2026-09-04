@@ -5,6 +5,8 @@ import type {
   LlmClassementRow,
   ClassementBatch,
   ClassementDirective,
+  RevisionTurn,
+  RevisionBaseline,
 } from "@/lib/csv/types";
 import type { LlmUsage } from "@/lib/llm/client-stream";
 import { DEFAULT_MODEL, LOCAL_MODEL_FALLBACK } from "@/lib/llm/config";
@@ -26,6 +28,13 @@ export type ProviderMode = "cloud" | "local";
 // (import ou aller-retour Explorateur). `null` = pas encore de plan.
 // Consigné dans le projet, le journal de traitement et l'export du rapport.
 export type PlanOrigin = "audit_llm" | "fourni" | null;
+
+/** Nombre de consignes de révision conservées. Miroir de la borne moteur
+ *  (`core.cla_revision.MAX_TURNS`) : c'est la **conversation compactée** — l'état
+ *  du classement remplace le transcript, donc l'historique ne doit jamais faire
+ *  dériver la taille du contexte, quel que soit le nombre de tours. Au-delà, les
+ *  tours les plus anciens tombent (le moteur applique la même borne). */
+export const MAX_REVISION_TURNS = 10;
 
 export type TokenOptions = {
   filterColumns: boolean;
@@ -132,6 +141,13 @@ export type WizardState = {
   // dossier du plan ou au niveau du fonds, injectées dans CLA-001 et **réutilisées
   // à chaque relance**. Persistées au projet. Transport pur.
   classementDirectives: ClassementDirective[];
+  // Révision du classement : l'historique des consignes de correction
+  // (tour courant en dernier) et le classement précédent capturé. `revisionBaseline`
+  // non null = révision **armée** — la prochaine exécution de CLA-001 est un tour
+  // de révision. Les deux sont persistés au projet (une révision armée survit à un
+  // rechargement, comme la reprise de lots).
+  classementRevisions: RevisionTurn[];
+  revisionBaseline: RevisionBaseline | null;
   classementRunning: boolean;
   thinkingClassement: string;
   llmRawResponse: string;
@@ -194,6 +210,17 @@ export type WizardState = {
   adoptPlan: (plan: string) => void;
   setPlanValide: (plan: string) => void;
   setClassementDirectives: (d: ClassementDirective[]) => void;
+  /**
+   * Arme une **révision** : capture le classement courant (lignes LLM,
+   * stats, avertissements) *avant* qu'il ne soit effacé par la relance, et empile
+   * la consigne de correction. Le baseline capturé est la seule copie du tour
+   * précédent une fois le run reparti. Sans classement courant, on conserve le
+   * baseline déjà armé (cas d'une relance après un run interrompu).
+   */
+  armRevision: (consigne: string) => void;
+  /** Désarme la révision et vide l'historique : la prochaine exécution repart
+   *  d'un classement normal (branche « à l'identique » du dialogue de relance). */
+  clearRevision: () => void;
   resetPlan: () => void;
   setClassementRunning: (b: boolean) => void;
   setClassementResult: (
@@ -248,6 +275,10 @@ export type ProjectSnapshot = {
   planOrigin?: PlanOrigin;
   // Consignes de classement — optionnel (absent des projets antérieurs → []).
   classementDirectives?: ClassementDirective[];
+  // Révision du classement — optionnels (absents des projets antérieurs
+  // → [] / null : un projet d'avant la révision se relit en classement normal).
+  classementRevisions?: RevisionTurn[];
+  revisionBaseline?: RevisionBaseline | null;
   // Racine locale du vrac — optionnel (absent des projets antérieurs → "").
   sourceRoot?: string;
   briefMode: boolean;
@@ -357,6 +388,8 @@ export const useWizard = create<WizardState>((set) => ({
   planModifie: false,
   planOrigin: null,
   classementDirectives: [],
+  classementRevisions: [],
+  revisionBaseline: null,
   classementRunning: false,
   thinkingClassement: "",
   llmRawResponse: "",
@@ -479,6 +512,8 @@ export const useWizard = create<WizardState>((set) => ({
       llmRawResponse: "",
       llmRawRows: null,
       classementBatches: null,
+      classementRevisions: [],
+      revisionBaseline: null,
       lastError: "",
       step: "upload",
     })),
@@ -517,6 +552,34 @@ export const useWizard = create<WizardState>((set) => ({
       planModifie: planValide !== state.planValideOriginal,
     })),
   setClassementDirectives: (classementDirectives) => set({ classementDirectives }),
+  armRevision: (consigne) =>
+    set((state) => {
+      const text = consigne.trim();
+      // Capture *avant* effacement : une fois la relance partie, `llmRawRows` et
+      // `csvFinal` sont vidés et ce baseline devient la seule trace du tour
+      // précédent. Sans classement courant (run interrompu), on garde celui déjà
+      // armé plutôt que d'écraser une capture valide par du vide.
+      const rows = state.llmRawRows;
+      const baseline: RevisionBaseline | null =
+        rows && rows.length > 0
+          ? {
+              rows,
+              stats: state.csvFinal?.stats ?? null,
+              warnings: state.csvFinal?.warnings ?? [],
+              itemCount: rows.length,
+            }
+          : state.revisionBaseline;
+      return {
+        revisionBaseline: baseline,
+        classementRevisions: text
+          ? [
+              ...state.classementRevisions,
+              { consigne: text, at: new Date().toISOString() },
+            ].slice(-MAX_REVISION_TURNS)
+          : state.classementRevisions,
+      };
+    }),
+  clearRevision: () => set({ revisionBaseline: null, classementRevisions: [] }),
   resetPlan: () =>
     set((state) => ({
       planValide: state.planValideOriginal,
@@ -563,6 +626,8 @@ export const useWizard = create<WizardState>((set) => ({
       llmRawResponse: "",
       llmRawRows: null,
       classementBatches: null,
+      classementRevisions: [],
+      revisionBaseline: null,
       thinkingClassement: "",
       lastError: "",
       usageAudit: null,
@@ -597,6 +662,8 @@ export const useWizard = create<WizardState>((set) => ({
       llmRawResponse: "",
       llmRawRows: null,
       classementBatches: null,
+      classementRevisions: [],
+      revisionBaseline: null,
       thinkingClassement: "",
       lastError: "",
       usageAudit: null,
@@ -624,6 +691,10 @@ export const useWizard = create<WizardState>((set) => ({
       planModifie: snapshot.planModifie,
       planOrigin: snapshot.planOrigin ?? (snapshot.planValide ? "audit_llm" : null),
       classementDirectives: snapshot.classementDirectives ?? [],
+      // Révision — absents d'un projet antérieur : il se relit alors en
+      // classement normal, sans révision armée.
+      classementRevisions: snapshot.classementRevisions ?? [],
+      revisionBaseline: snapshot.revisionBaseline ?? null,
       briefMode: snapshot.briefMode ?? false,
       referencePlan: snapshot.referencePlan ?? "",
       referencePlanName: snapshot.referencePlanName ?? "",

@@ -5,7 +5,7 @@ import {
   stripFondsLabel,
 } from "./plan-tree";
 
-// ── Éditeur structuré du plan ──────────────────────────────────────────────
+// ── Éditeur structuré du plan ─────────────────────────────────────────────────
 // Modèle d'arbre éditable + sérialisation vers le bloc « Arborescence
 // technique » canonique du gabarit AUD-001. Les préfixes numériques des noms
 // techniques (1_, 1-1_, …) sont RECALCULÉS depuis la position de chaque nœud à

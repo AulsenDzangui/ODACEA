@@ -47,7 +47,7 @@ def _normalize_plan_origin(origin: str | None) -> str | None:
 
 
 def confidentiality_lines(description_sent: bool) -> list[str]:
-    """Déclaration de confidentialité du traitement (RGPD de l'outil, cf. H5).
+    """Déclaration de confidentialité du traitement (RGPD de l'outil).
 
     Le libellé s'adapte au seul vecteur par lequel du contenu *dérivé* peut
     atteindre le modèle : l'option « inclure la description » (Content.Description,
@@ -95,6 +95,7 @@ def build_journal(
     description_sent: bool = False,
     plan_origin: str | None = None,
     plan_modified: bool = False,
+    revision: dict | None = None,
     generated_at: str | None = None,
 ) -> dict:
     """Construit l'enregistrement structuré (JSON-ready, camelCase) du journal.
@@ -115,6 +116,11 @@ def build_journal(
     ``plan_modified`` indique une retouche manuelle. Le journal distingue ainsi sans
     ambiguïté un run avec audit LLM d'un run à plan fourni. ``None`` = origine non
     renseignée (rétro-compat) → ligne omise.
+
+    ``revision`` trace une **relance en révision** : les consignes de
+    correction données au modèle et la part du classement qu'il a effectivement
+    modifiée. Un classement révisé ne se relit pas comme un premier jet — le
+    journal doit dire lequel il documente. ``None`` = run normal → section omise.
     """
     anomalies = [w for w in (warnings or []) if w and str(w).strip()]
     if not ok and not anomalies:
@@ -142,6 +148,7 @@ def build_journal(
         "outcome": {"ok": bool(ok), "exitCode": int(exit_code)},
         "anomalies": anomalies,
         "conformity": conformity,
+        "revision": dict(revision) if revision else None,
         "confidentiality": confidentiality_lines(description_sent),
     }
 
@@ -181,6 +188,45 @@ def _conformity_lines(conformity: dict) -> list[str]:
     ):
         if conformity.get(key):
             lines.append(f"- {label} : {conformity[key]}")
+    return lines
+
+
+def _revision_lines(revision: dict) -> list[str]:
+    """Lignes « Révision du classement » : ce qui a été demandé au modèle
+    et ce qu'il a effectivement changé. La part modifiée est le chiffre qui compte
+    pour un relecteur — une révision qui touche tout n'est pas une révision."""
+    lines: list[str] = []
+    turns = [str(t) for t in (revision.get("turns") or []) if str(t).strip()]
+    if turns:
+        lines.append(f"- Consignes de révision ({len(turns)}) :")
+        lines += [f"  - {t}" for t in turns]
+    source = revision.get("revisedFrom")
+    if source:
+        lines.append(f"- Classement révisé : {source}")
+    compared = revision.get("revisionCompared")
+    changed = revision.get("revisionChanged")
+    pct = revision.get("revisionChangedPct")
+    if compared:
+        lines.append(
+            f"- Décisions modifiées : {changed} / {compared}"
+            + (f" ({pct} %)" if pct is not None else "")
+        )
+    for key, label in (
+        ("revisionFolderChanged", "Fichiers déplacés (dossier cible modifié)"),
+        ("revisionTitleChanged", "Fichiers renommés (titre modifié)"),
+        ("revisionNotInPrevious", "Fichiers absents du classement précédent"),
+    ):
+        if revision.get(key):
+            lines.append(f"- {label} : {revision[key]}")
+    for key, label in (
+        ("revisionFoldersMissingDelta", "Dossiers du plan restés vides"),
+        ("revisionOffPlanDelta", "Dossiers hors plan"),
+        ("revisionUnclassifiedDelta", "Items non classés"),
+        ("revisionMalformedDelta", "Items à cible malformée"),
+    ):
+        delta = revision.get(key)
+        if delta:  # 0 = pas d'évolution : rien à signaler
+            lines.append(f"- {label} : {delta:+d} par rapport au classement précédent")
     return lines
 
 
@@ -253,6 +299,12 @@ def format_journal_markdown(journal: dict) -> str:
         conf_lines = _conformity_lines(conformity)
         if conf_lines:
             lines += ["", "## Volumétrie et conformité", "", *conf_lines]
+
+    revision = journal.get("revision")
+    if revision:
+        rev_lines = _revision_lines(revision)
+        if rev_lines:
+            lines += ["", "## Révision du classement", "", *rev_lines]
 
     anomalies = journal.get("anomalies", [])
     lines += ["", f"## Anomalies ({len(anomalies)})", ""]

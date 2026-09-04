@@ -50,7 +50,14 @@
 #   présente dans le nom/contenu d'origine, intégrée au nom sans préfixe technique.
 # ⚠️ Modification du comportement de nommage : chiffres avant/après à
 #   mesurer via le harnais d'éval (`cli.py eval`).
-PROMPT_VERSION = "1.5.0"
+# 1.6.0 — canal optionnel de **révision** (relance conversationnelle). Le
+#   message peut porter les consignes de correction de l'archiviste + une synthèse
+#   mesurée du run précédent, et la liste des fichiers deux colonnes de plus
+#   (`PrevFolder`/`PrevTitle` = le classement du tour précédent, ligne à ligne).
+#   Comportement par défaut (sans révision) **inchangé** : prompt assemblé
+#   byte-identique à la 1.5.0. ⚠️ L'efficacité reste à mesurer sur modèles réels
+# (/ métriques `revisionChangedPct` et deltas de `core.evals`).
+PROMPT_VERSION = "1.6.0"
 
 _ROLE = """\
 # Rôle
@@ -164,6 +171,22 @@ Le message peut inclure des **consignes de classement** rédigées par l'archivi
 - Hors de ces autorisations, `TargetFolder` reste **un seul nom exact d'un dossier du plan**, sans « / »."""
 
 
+# Consigne d'usage de la révision — ajoutée au prompt système
+# **uniquement** quand l'appelant fournit un bloc de révision (canal optionnel,
+# même modèle que les exemples few-shot et les consignes). Le texte des consignes
+# et la synthèse du run précédent sont formatés côté moteur
+# (`core.cla_revision.render_revision`) et placés dans le user message ; les
+# décisions ligne à ligne voyagent, elles, dans les colonnes `PrevFolder`/
+# `PrevTitle` de la liste des fichiers (`core.csv_handler.classement_llm_csv`).
+_REVISION = """\
+# Révision d'un classement précédent
+Ce classement est une **révision** : vous avez déjà classé ces fichiers une première fois, et l'archiviste vous demande de corriger votre travail.
+- La liste des fichiers porte deux colonnes de plus : **`PrevFolder`** et **`PrevTitle`** — le dossier cible et le nom que **vous** aviez retenus au tour précédent. Une valeur vide signifie que le fichier n'avait **pas** été classé : classez-le maintenant.
+- Les **consignes de révision** de l'archiviste font autorité : appliquez-les en priorité, dans le cadre du plan validé. Quand plusieurs tours sont listés, ils sont tous acquis — le dernier est la demande courante, les précédents ne doivent pas régresser.
+- **Stabilité — c'est la règle la plus importante.** Ne modifiez **que** ce que les consignes impliquent, plus ce qui était manifestement erroné (fichier non classé, dossier absent du plan, nom incohérent). Pour **tout autre fichier**, recopiez `PrevFolder` et `PrevTitle` **à l'identique**. Une révision qui rebrasse l'ensemble du fonds est un échec : elle défait un travail déjà validé.
+- Le format de sortie est **inchangé** : 3 colonnes, sans les colonnes `Prev…`."""
+
+
 def _livraison(avis: bool, out_fmt: str) -> str:
     """Consigne de livraison — sa numérotation dépend de la présence de l'avis,
     son format de colonnes du mode d'identifiant."""
@@ -190,6 +213,7 @@ def build_system_prompt(
     ref_mode: bool = False,
     examples: bool = False,
     directives: bool = False,
+    revision: bool = False,
 ) -> str:
     """Assemble le prompt CLA-001.
 
@@ -209,6 +233,12 @@ def build_system_prompt(
     À activer **uniquement** quand le user message porte un bloc de consignes
     (``build_user_message(..., directives=...)``).
 
+    ``revision`` (défaut faux) ajoute la consigne d'usage de la **révision**
+    (colonnes ``PrevFolder``/``PrevTitle`` + règle de stabilité). À activer
+    **uniquement** quand le user message porte un bloc de révision
+    (``build_user_message(..., revision=...)``) **et** que la liste des fichiers
+    porte les colonnes ``Prev…`` (``classement_llm_csv(..., previous=…)``).
+
     Défauts faux ⇒ prompt système **inchangé** (byte-identique à la 1.3.0).
     """
     out_fmt = "Ref;TargetFolder;NewTitle" if ref_mode else "Path;TargetFolder;NewTitle"
@@ -217,6 +247,8 @@ def build_system_prompt(
         parts.append(_EXEMPLES)
     if directives:
         parts.append(_DIRECTIVES)
+    if revision:
+        parts.append(_REVISION)
     if avis:
         parts.append(_AVIS)
     parts.append(_livraison(avis, out_fmt))
@@ -244,6 +276,7 @@ def build_user_message(
     ref_mode: bool = False,
     examples: str | None = None,
     directives: str | None = None,
+    revision: str | None = None,
 ) -> str:
     """Assemble le user message CLA-001.
 
@@ -256,8 +289,15 @@ def build_user_message(
     l'archiviste (rendu par ``core.cla_directives.render_directives``). Inséré au
     même endroit — dans le préfixe stable mis en cache (constant d'un lot à l'autre).
 
-    ``examples``/``directives`` ``None`` ou vides ⇒ user message **inchangé**
-    (byte-identique à la 1.3.0).
+    ``revision`` : bloc Markdown de **révision** — consignes de correction
+    de l'archiviste + synthèse mesurée du run précédent (rendu par
+    ``core.cla_revision.render_revision``). Inséré au même endroit, dans le
+    préfixe stable mis en cache : il est constant d'un lot à l'autre, seules les
+    décisions précédentes ligne à ligne varient (colonnes ``PrevFolder``/
+    ``PrevTitle`` de ``csv_content``, donc **après** la frontière de cache).
+
+    ``examples``/``directives``/``revision`` ``None`` ou vides ⇒ user message
+    **inchangé** (byte-identique à la 1.3.0).
     """
     if ref_mode:
         id_instr = "Ref (recopiée à l'identique)"
@@ -265,11 +305,13 @@ def build_user_message(
         id_instr = "Path (inchangé)"
     examples_block = f"{examples.strip()}\n\n" if examples and examples.strip() else ""
     directives_block = f"{directives.strip()}\n\n" if directives and directives.strip() else ""
+    revision_block = f"{revision.strip()}\n\n" if revision and revision.strip() else ""
     return (
         "**Plan de classement validé :**\n"
         f"{plan_valide}\n\n"
         f"{examples_block}"
         f"{directives_block}"
+        f"{revision_block}"
         f"{CACHE_BOUNDARY}\n"
         "```csv\n"
         f"{csv_content}\n"

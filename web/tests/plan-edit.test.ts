@@ -160,7 +160,7 @@ describe("round-trip sérialisation ↔ parsing miroir", () => {
   });
 });
 
-describe("moveNodeInModel (glisser-déposer D1)", () => {
+describe("moveNodeInModel (glisser-déposer)", () => {
   // Ordre du modèle de PLAN_GABARIT : [Inscriptions(0), Cantine(1)[Menus(1,0),
   // Factures(1,1)], Vie_scolaire(2)]. On vérifie le round-trip via le bloc
   // sérialisé re-parsé par parsePlanTree (préfixes recalculés depuis la position).

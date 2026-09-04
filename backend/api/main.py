@@ -26,6 +26,10 @@ Endpoints :
     POST /apply/preview — aperçu de l'application physique du classement (backend local)
     POST /apply — copie du classement vers l'arborescence cible en SSE (backend local)
     GET  /health                 — sonde de vie
+
+Mode tout-en-un (desktop.py) : quand ODACEA_STATIC_DIR pointe vers le front
+exporté en statique, `/` et les assets sont servis par cette même app FastAPI
+(StaticFiles montée en dernier, cf. fin de fichier) — no-op sinon (Docker/dev/démo).
 """
 from __future__ import annotations
 
@@ -73,6 +77,7 @@ from config.settings import (
     DEMO_MODE,
     DEMO_MODEL,
     DEMO_PROXY_SECRET,
+    ODACEA_STATIC_DIR,
     SSE_HEARTBEAT_S,
 )
 from llm import get_provider
@@ -572,3 +577,14 @@ def validate_connection(req: ValidateConnectionRequest):
         return {"ok": False, "error": provider.last_error or "Échec"}
     except Exception as e:
         return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+
+# Mode tout-en-un (Option B) : quand `desktop.py` a exporté le front en
+# statique et pointé ODACEA_STATIC_DIR dessus, on le sert à la racine — en
+# dernier, pour qu'aucune route API déclarée ci-dessus ne soit court-circuitée
+# (un `Mount("/")` ne capte que ce qu'aucune route plus haut n'a déjà matché).
+# No-op par défaut (Docker/dev/démo ne posent jamais cette variable).
+if ODACEA_STATIC_DIR and pathlib.Path(ODACEA_STATIC_DIR).is_dir():
+    from fastapi.staticfiles import StaticFiles
+
+    app.mount("/", StaticFiles(directory=ODACEA_STATIC_DIR, html=True), name="static")
