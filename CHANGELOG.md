@@ -12,6 +12,48 @@ La version courante est portée par trois fichiers tenus synchrones
 
 ## [Non publié]
 
+## [0.4.0] — 2026-09-04
+
+Ce lot ajoute la **révision** d'un classement existant — corriger sans tout
+relancer — un **mode d'installation minimal** pour un poste isolé, et une
+refonte de la navigation du parcours guidé.
+
+### Ajouté
+
+- **Réviser un classement au lieu de le relancer à zéro** : à l'étape de
+  classement, l'archiviste peut demander une révision plutôt qu'un nouveau
+  classement complet. Le modèle reçoit son propre classement précédent
+  (dossier et titre retenus pour chaque élément), les consignes de correction,
+  et une synthèse mesurée du run précédent (dossiers du plan restés vides,
+  dossiers créés hors plan, cibles malformées, éléments non classés) — de quoi
+  corriger en connaissance de cause plutôt qu'en repartant aveugle. Le coût en
+  contexte reste proportionnel au **lot traité**, jamais au fonds entier, quel
+  que soit le nombre de tours de révision. Les deux façons de relancer restent
+  disponibles : à l'identique (comportement historique) ou avec consignes de
+  révision.
+- **Modifier une consigne de classement déjà posée** : les consignes ancrées
+  au plan ou au fonds peuvent désormais être éditées sur place, sans devoir la
+  supprimer puis en recréer une.
+- **Mode tout-en-un** : un point d'entrée unique (`odacea-desktop`, ou
+  l'exécutable autonome) sert l'interface et l'API sur un seul port en local,
+  et ouvre le navigateur par défaut — pour un poste isolé sans `npm`, `pip` ni
+  Docker. Écoute `127.0.0.1` uniquement, aucune connexion sortante non
+  sollicitée, aucune mise à jour automatique.
+- **Aperçu avant/après en plein écran** : la comparaison entre l'arborescence
+  source et l'arborescence cible s'ouvre dans une modale occupant tout
+  l'écran, avec un bouton plier/déplier tout par volet — la profondeur d'un
+  vrac réel dépasse vite ce qu'une fenêtre de taille normale peut montrer
+  utilement.
+
+### Modifié
+
+- **Parcours guidé en divulgation progressive** : les options avancées de
+  chaque étape (import, audit, classement) restent repliées par défaut ;
+  l'archiviste qui n'en a pas besoin suit un chemin plus court, sans rien
+  perdre en fonctionnalités.
+- **Identité visuelle** : nouveau logo (dossiers empilés) et accent de marque
+  indigo appliqués à l'interface.
+
 ### Corrigé
 
 - **`litellm` est désormais borné par le bas (`>= 1.84`) et non plus par le
@@ -20,6 +62,12 @@ La version courante est portée par trois fichiers tenus synchrones
   vulnérabilités connues — corrigées justement en 1.84.0. Les versions récentes
   fournissent un paquet précompilé jusqu'à Python 3.14 : le plancher règle donc
   à la fois la sécurité et l'installation.
+- **Aperçu avant/après aligné sur les options d'export de titre** : la
+  comparaison pouvait montrer des titres différents de ceux réellement
+  présents dans le CSV téléchargé et dans la copie physique.
+- **Une erreur d'écriture du journal de traitement n'interrompt plus l'appel
+  au modèle.** L'échec de log (répertoire en lecture seule, disque plein…) est
+  désormais isolé du reste du traitement.
 
 ## [0.3.0] — 2026-07-28
 
@@ -205,7 +253,8 @@ sur un poste Windows récent — voir « Corrigé ».
 - Support des modèles locaux (Ollama, LM Studio) pour garder les données
   sensibles sur site, en plus des fournisseurs cloud.
 
-[Non publié]: https://github.com/AulsenDzangui/ODACEA/compare/v0.3.0...HEAD
+[Non publié]: https://github.com/AulsenDzangui/ODACEA/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/AulsenDzangui/ODACEA/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/AulsenDzangui/ODACEA/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/AulsenDzangui/ODACEA/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/AulsenDzangui/ODACEA/releases/tag/v0.1.0
